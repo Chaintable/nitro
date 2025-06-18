@@ -50,7 +50,7 @@ jobs:
         with:
           file: ${{ env.DOCKERFILE }}
           context: .
-          push: false
+          push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ matrix.arch }}-${{ env.REVISION }}
           build-args: ACCESS_TOKEN=${{ steps.generate-token.outputs.token }}
           provenance: false
