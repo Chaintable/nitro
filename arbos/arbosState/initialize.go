@@ -58,7 +58,7 @@ func MakeGenesisBlock(parentHash common.Hash, blockNumber uint64, timestamp uint
 	return types.NewBlock(head, nil, nil, trie.NewStackTrie(nil))
 }
 
-func InitializeArbosInDatabase(db ethdb.Database, cacheConfig *core.CacheConfig, initData statetransfer.InitDataReader, chainConfig *params.ChainConfig, genesisArbOSInit *params.ArbOSInit, initMessage *arbostypes.ParsedInitMessage, timestamp uint64, accountsPerSync uint) (root common.Hash, err error) {
+func InitializeArbosInDatabase(db ethdb.Database, cacheConfig *core.CacheConfig, initData statetransfer.InitDataReader, chainConfig *params.ChainConfig, genesisArbOSInit *params.ArbOSInit, initMessage *arbostypes.ParsedInitMessage, timestamp uint64, accountsPerSync uint, tracer *tracing.Hooks) (root common.Hash, err error) {
 	triedbConfig := cacheConfig.TriedbConfig()
 	triedbConfig.Preimages = false
 	stateDatabase := state.NewDatabase(triedb.NewDatabase(db, triedbConfig), nil)
@@ -69,6 +69,7 @@ func InitializeArbosInDatabase(db ethdb.Database, cacheConfig *core.CacheConfig,
 	if err != nil {
 		panic("failed to init empty statedb :" + err.Error())
 	}
+	statedb.SetOnCommitLogger(tracer.OnCommit)
 
 	noStateTrieChangesToCommitError := regexp.MustCompile("^triedb layer .+ is disk layer$")
 
@@ -91,6 +92,7 @@ func InitializeArbosInDatabase(db ethdb.Database, cacheConfig *core.CacheConfig,
 		if err != nil {
 			return common.Hash{}, err
 		}
+		statedb.SetOnCommitLogger(tracer.OnCommit)
 		return root, nil
 	}
 
