@@ -249,6 +249,9 @@ func WriteOrTestBlockChain(
 	txLookupLimit uint64,
 	accountsPerSync uint,
 ) (*core.BlockChain, error) {
+	if tracer != nil && tracer.OnBlockchainInit != nil {
+		tracer.OnBlockchainInit(chainConfig)
+	}
 	emptyBlockChain := rawdb.ReadHeadHeader(chainDb) == nil
 	if !emptyBlockChain && (cacheConfig.StateScheme == rawdb.PathScheme) {
 		// When using path scheme, and the stored state trie is not empty,
