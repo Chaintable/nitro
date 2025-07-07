@@ -597,12 +597,12 @@ func createNodeImpl(
 			}
 			daReader = das.NewReaderPanicWrapper(daReader)
 		}
-	} else if l2Config.ArbitrumChainParams.DataAvailabilityCommittee {
+	} else {
 		return nil, errors.New("a data availability service is required for this chain, but it was not configured")
 	}
 
 	// We support a nil txStreamer for the pruning code
-	if txStreamer != nil && txStreamer.chainConfig.ArbitrumChainParams.DataAvailabilityCommittee && daReader == nil {
+	if txStreamer != nil && daReader == nil {
 		return nil, errors.New("data availability service required but unconfigured")
 	}
 	var dapReaders []daprovider.Reader

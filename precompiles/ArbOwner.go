@@ -353,3 +353,20 @@ func (con ArbOwner) SetChainConfig(c ctx, evm mech, serializedChainConfig []byte
 	}
 	return c.State.SetChainConfig(serializedChainConfig)
 }
+
+// TODO: emit event when this function is called
+
+func (con ArbOwner) SetSharePrice(c ctx, evm mech, sharePrice uint64) error {
+	if c == nil {
+		return errors.New("nil context")
+	}
+	return c.State.SetSharePrice(sharePrice, evm.Context.Time)
+}
+
+// set to 0 to disable automatic yield
+func (con ArbOwner) SetApy(c ctx, evm mech, apy uint64) error {
+	if c == nil {
+		return errors.New("nil context")
+	}
+	return c.State.SetApy(apy, evm.Context.Time)
+}

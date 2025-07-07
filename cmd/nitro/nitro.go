@@ -505,9 +505,9 @@ func mainImpl() int {
 		return 1
 	}
 
-	if l2BlockChain.Config().ArbitrumChainParams.DataAvailabilityCommittee != nodeConfig.Node.DataAvailability.Enable {
+	if !nodeConfig.Node.DataAvailability.Enable {
 		flag.Usage()
-		log.Error(fmt.Sprintf("data availability service usage for this chain is set to %v but --node.data-availability.enable is set to %v", l2BlockChain.Config().ArbitrumChainParams.DataAvailabilityCommittee, nodeConfig.Node.DataAvailability.Enable))
+		log.Error(fmt.Sprintf("data availability service usage is required for this chain but --node.data-availability.enable is set to %v", nodeConfig.Node.DataAvailability.Enable))
 		return 1
 	}
 

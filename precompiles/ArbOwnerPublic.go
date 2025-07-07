@@ -66,3 +66,15 @@ func (con ArbOwnerPublic) GetScheduledUpgrade(c ctx, evm mech) (uint64, uint64, 
 	}
 	return version, timestamp, nil
 }
+
+func (con ArbOwnerPublic) GetSharePrice(c ctx, evm mech) (uint64, error) {
+	return c.State.SharePrice()
+}
+
+func (con ArbOwnerPublic) GetShareCount(c ctx, evm mech) (huge, error) {
+	return c.State.ShareCount()
+}
+
+func (con ArbOwnerPublic) GetApy(c ctx, evm mech) (uint64, error) {
+	return c.State.Apy()
+}

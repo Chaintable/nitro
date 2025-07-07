@@ -331,7 +331,9 @@ USER user
 FROM nitro-node-validator AS nitro-node-dev
 USER root
 # Copy in latest WASM module root
-RUN rm -f /home/user/target/machines/latest
+RUN rm -rf /home/user/target/machines
+COPY --from=public.ecr.aws/i6b2w2n6/nitro-node:apechain-1.0.0 /home/user/target/machines /home/user/target/machines
+RUN rm -rf /home/user/target/machines/latest
 COPY --from=prover-export /bin/jit                                         /usr/local/bin/
 COPY --from=node-builder  /workspace/target/bin/deploy                     /usr/local/bin/
 COPY --from=node-builder  /workspace/target/bin/seq-coordinator-invalidate /usr/local/bin/
@@ -340,6 +342,7 @@ COPY --from=module-root-calc /workspace/target/machines/latest/machine.wavm.br /
 COPY --from=module-root-calc /workspace/target/machines/latest/until-host-io-state.bin /home/user/target/machines/latest/
 COPY --from=module-root-calc /workspace/target/machines/latest/module-root.txt /home/user/target/machines/latest/
 COPY --from=module-root-calc /workspace/target/machines/latest/replay.wasm /home/user/target/machines/latest/
+RUN cd /home/user/target/machines && LR=$(cat /home/user/target/machines/latest/module-root.txt) && mv latest $LR && ln -s $LR latest
 RUN export DEBIAN_FRONTEND=noninteractive && \
     apt-get update && \
     apt-get install -y \
