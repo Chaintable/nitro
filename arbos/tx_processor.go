@@ -655,7 +655,6 @@ func (p *TxProcessor) EndTxHook(gasLeft uint64, success bool) {
 	if p.state.ArbOSVersion() < params.ArbosVersion_2 {
 		posterFeeDestination = p.evm.Context.Coinbase
 	}
-	p.evm.Context.L1Fee = p.PosterFee
 	util.MintBalance(&posterFeeDestination, p.PosterFee, p.evm, scenario, tracing.BalanceIncreaseL1PosterFee)
 	if p.state.ArbOSVersion() >= params.ArbosVersion_10 {
 		if _, err := p.state.L1PricingState().AddToL1FeesAvailable(p.PosterFee); err != nil {
