@@ -45,7 +45,6 @@ require (
 	github.com/mailru/easygo v0.0.0-20190618140210-3c14a0dc985f
 	github.com/mattn/go-sqlite3 v1.14.22
 	github.com/mitchellh/mapstructure v1.5.0
-	github.com/offchainlabs/bold v0.0.3-0.20250313062923-4b76649f2abc
 	github.com/pkg/errors v0.9.1
 	github.com/r3labs/diff/v3 v3.0.1
 	github.com/redis/go-redis/v9 v9.6.3
@@ -71,7 +70,7 @@ require (
 	cloud.google.com/go/auth/oauth2adapt v0.2.2 // indirect
 	cloud.google.com/go/compute/metadata v0.3.0 // indirect
 	cloud.google.com/go/iam v1.1.8 // indirect
-	github.com/Chaintable/pipeline v0.0.59 // indirect
+	github.com/Chaintable/pipeline v0.0.61-nitro-1 // indirect
 	github.com/celestiaorg/merkletree v0.0.0-20210714075610-a84dc3ddbbe4 // indirect
 	github.com/cockroachdb/fifo v0.0.0-20240606204812-0bbfbd93a7ce // indirect
 	github.com/coreos/go-semver v0.3.1 // indirect
@@ -118,7 +117,6 @@ require (
 require (
 	github.com/DataDog/zstd v1.5.2 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
-	github.com/VictoriaMetrics/fastcache v1.12.2 // indirect
 	github.com/alicebob/gopher-json v0.0.0-20200520072559-a9ecdc9d1d3a // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.6 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.16.20 // indirect
@@ -168,7 +166,6 @@ require (
 	github.com/google/flatbuffers v1.12.1 // indirect
 	github.com/google/go-github/v62 v62.0.0
 	github.com/google/pprof v0.0.0-20231023181126-ff6d637d2a7b // indirect
-	github.com/gorilla/mux v1.8.0 // indirect
 	github.com/gorilla/websocket v1.5.0 // indirect
 	github.com/graph-gophers/graphql-go v1.3.0 // indirect
 	github.com/h2non/filetype v1.0.6 // indirect
@@ -178,7 +175,6 @@ require (
 	github.com/huin/goupnp v1.3.0 // indirect
 	github.com/jackpal/go-nat-pmp v1.0.2 // indirect
 	github.com/juju/errors v0.0.0-20181118221551-089d3ea4e4d5 // indirect
-	github.com/juju/loggo v0.0.0-20180524022052-584905176618 // indirect
 	github.com/klauspost/compress v1.17.11 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.5 // indirect
 	github.com/klauspost/reedsolomon v1.11.8 // indirect
