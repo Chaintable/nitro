@@ -1,6 +1,5 @@
 // race detection makes things slow and miss timeouts
 //go:build !race
-// +build !race
 
 package arbtest
 
@@ -106,7 +105,6 @@ func validateBlockRange(
 }
 
 func TestProgramEvmData(t *testing.T) {
-	t.Parallel()
 	testEvmData(t, true)
 }
 

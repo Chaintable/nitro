@@ -17,6 +17,7 @@ import (
 
 	"github.com/offchainlabs/nitro/arbnode"
 	"github.com/offchainlabs/nitro/arbutil"
+	"github.com/offchainlabs/nitro/util/testhelpers/env"
 )
 
 func generateBlocks(t *testing.T, ctx context.Context, builder *NodeBuilder, testClient2ndNode *TestClient, transactions int) {
@@ -32,8 +33,6 @@ func generateBlocks(t *testing.T, ctx context.Context, builder *NodeBuilder, tes
 }
 
 func TestFinalizedBlocksMovedToAncients(t *testing.T) {
-	t.Parallel()
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -85,14 +84,12 @@ func TestFinalizedBlocksMovedToAncients(t *testing.T) {
 		t.Fatalf("Ancients should be %d, but got %d", finalizedBlockNumber+1, ancients)
 	}
 
-	hasAncient, err := builder.L2.ExecNode.ChainDB.HasAncient(rawdb.ChainFreezerHeaderTable, 8)
-	Require(t, err)
-	if !hasAncient {
+	ancient, err := builder.L2.ExecNode.ChainDB.Ancient(rawdb.ChainFreezerHeaderTable, 8)
+	if err != nil || ancient == nil {
 		t.Fatalf("Ancient should exist")
 	}
-	hasAncient, err = builder.L2.ExecNode.ChainDB.HasAncient(rawdb.ChainFreezerHeaderTable, 15)
-	Require(t, err)
-	if hasAncient {
+	_, err = builder.L2.ExecNode.ChainDB.Ancient(rawdb.ChainFreezerHeaderTable, 15)
+	if err == nil {
 		t.Fatalf("Ancient should not exist")
 	}
 }
@@ -129,8 +126,6 @@ func checksFinalityData(
 }
 
 func TestFinalityDataWaitForBlockValidator(t *testing.T) {
-	t.Parallel()
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -147,7 +142,7 @@ func TestFinalityDataWaitForBlockValidator(t *testing.T) {
 	defer cleanup()
 
 	nodeConfig2ndNode := arbnode.ConfigDefaultL1NonSequencerTest()
-	execConfig2ndNode := ExecConfigDefaultTest(t)
+	execConfig2ndNode := ExecConfigDefaultTest(t, env.GetTestStateScheme())
 	testClient2ndNode, cleanup2ndNode := builder.Build2ndNode(t, &SecondNodeParams{nodeConfig: nodeConfig2ndNode, execConfig: execConfig2ndNode})
 	defer cleanup2ndNode()
 
@@ -179,20 +174,20 @@ func TestFinalityDataWaitForBlockValidator(t *testing.T) {
 		BlockHash: validatedMsgResult.BlockHash,
 	}
 
-	err = builder.L2.ExecNode.SyncMonitor.SetFinalityData(ctx, &safeFinalityData, &finalizedFinalityData, &validatedFinalityData)
+	err = builder.L2.ExecNode.SyncMonitor.SetFinalityData(&safeFinalityData, &finalizedFinalityData, &validatedFinalityData)
 	Require(t, err)
 
 	// wait for block validator is set to true in second node
 	checksFinalityData(t, "first node", ctx, builder.L2, validatedMsgIdx, validatedMsgIdx)
 
-	err = testClient2ndNode.ExecNode.SyncMonitor.SetFinalityData(ctx, &safeFinalityData, &finalizedFinalityData, &validatedFinalityData)
+	err = testClient2ndNode.ExecNode.SyncMonitor.SetFinalityData(&safeFinalityData, &finalizedFinalityData, &validatedFinalityData)
 	Require(t, err)
 
 	// wait for block validator is no set to true in second node
 	checksFinalityData(t, "2nd node", ctx, testClient2ndNode, finalizedMsgIdx, safeMsgIdx)
 
 	// if validatedFinalityData is nil, error should be returned if waitForBlockValidator is set to true
-	err = builder.L2.ExecNode.SyncMonitor.SetFinalityData(ctx, &safeFinalityData, &finalizedFinalityData, nil)
+	err = builder.L2.ExecNode.SyncMonitor.SetFinalityData(&safeFinalityData, &finalizedFinalityData, nil)
 	if err == nil {
 		t.Fatalf("err should not be nil")
 	}
@@ -222,8 +217,6 @@ func ensureSafeBlockDoesNotExist(t *testing.T, ctx context.Context, testClient *
 }
 
 func TestFinalityDataPushedFromConsensusToExecution(t *testing.T) {
-	t.Parallel()
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -254,7 +247,7 @@ func TestFinalityDataPushedFromConsensusToExecution(t *testing.T) {
 	ensureSafeBlockDoesNotExist(t, ctx, builder.L2, "first node after generating blocks")
 
 	// if nil is passed finality data should not be set
-	err := builder.L2.ExecNode.SyncMonitor.SetFinalityData(ctx, nil, nil, nil)
+	err := builder.L2.ExecNode.SyncMonitor.SetFinalityData(nil, nil, nil)
 	Require(t, err)
 	ensureFinalizedBlockDoesNotExist(t, ctx, builder.L2, "first node after generating blocks and setting finality data to nil")
 	ensureSafeBlockDoesNotExist(t, ctx, builder.L2, "first node after generating blocks and setting finality data to nil")
@@ -279,8 +272,6 @@ func TestFinalityDataPushedFromConsensusToExecution(t *testing.T) {
 }
 
 func TestFinalityAfterReorg(t *testing.T) {
-	t.Parallel()
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -295,7 +286,7 @@ func TestFinalityAfterReorg(t *testing.T) {
 	defer cleanup()
 
 	nodeConfig2ndNode := arbnode.ConfigDefaultL1NonSequencerTest()
-	execConfig2ndNode := ExecConfigDefaultTest(t)
+	execConfig2ndNode := ExecConfigDefaultTest(t, env.GetTestStateScheme())
 	testClient2ndNode, cleanup2ndNode := builder.Build2ndNode(t, &SecondNodeParams{nodeConfig: nodeConfig2ndNode, execConfig: execConfig2ndNode})
 	defer cleanup2ndNode()
 
@@ -319,7 +310,7 @@ func TestFinalityAfterReorg(t *testing.T) {
 		BlockHash: finalizedMsgResult.BlockHash,
 	}
 
-	err = builder.L2.ExecNode.SyncMonitor.SetFinalityData(ctx, &safeFinalityData, &finalizedFinalityData, nil)
+	err = builder.L2.ExecNode.SyncMonitor.SetFinalityData(&safeFinalityData, &finalizedFinalityData, nil)
 	Require(t, err)
 
 	checksFinalityData(t, "before reorg", ctx, builder.L2, finalizedFinalityData.MsgIdx, safeFinalityData.MsgIdx)
@@ -335,8 +326,6 @@ func TestFinalityAfterReorg(t *testing.T) {
 }
 
 func TestSetFinalityBlockHashMismatch(t *testing.T) {
-	t.Parallel()
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -351,7 +340,7 @@ func TestSetFinalityBlockHashMismatch(t *testing.T) {
 	defer cleanup()
 
 	nodeConfig2ndNode := arbnode.ConfigDefaultL1NonSequencerTest()
-	execConfig2ndNode := ExecConfigDefaultTest(t)
+	execConfig2ndNode := ExecConfigDefaultTest(t, env.GetTestStateScheme())
 	testClient2ndNode, cleanup2ndNode := builder.Build2ndNode(t, &SecondNodeParams{nodeConfig: nodeConfig2ndNode, execConfig: execConfig2ndNode})
 	defer cleanup2ndNode()
 
@@ -371,7 +360,7 @@ func TestSetFinalityBlockHashMismatch(t *testing.T) {
 		BlockHash: common.Hash{},
 	}
 
-	err := builder.L2.ExecNode.SyncMonitor.SetFinalityData(ctx, &safeFinalityData, &finalizedFinalityData, nil)
+	err := builder.L2.ExecNode.SyncMonitor.SetFinalityData(&safeFinalityData, &finalizedFinalityData, nil)
 	if err == nil {
 		t.Fatalf("err should not be nil")
 	}
@@ -381,8 +370,6 @@ func TestSetFinalityBlockHashMismatch(t *testing.T) {
 }
 
 func TestFinalityDataNodeOutOfSync(t *testing.T) {
-	t.Parallel()
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -397,7 +384,7 @@ func TestFinalityDataNodeOutOfSync(t *testing.T) {
 	defer cleanup()
 
 	nodeConfig2ndNode := arbnode.ConfigDefaultL1NonSequencerTest()
-	execConfig2ndNode := ExecConfigDefaultTest(t)
+	execConfig2ndNode := builder.ExecConfigDefaultTest(t, true)
 	testClient2ndNode, cleanup2ndNode := builder.Build2ndNode(t, &SecondNodeParams{nodeConfig: nodeConfig2ndNode, execConfig: execConfig2ndNode})
 	defer cleanup2ndNode()
 
@@ -421,13 +408,13 @@ func TestFinalityDataNodeOutOfSync(t *testing.T) {
 		BlockHash: finalizedMsgResult.BlockHash,
 	}
 
-	err = builder.L2.ExecNode.SyncMonitor.SetFinalityData(ctx, &safeFinalityData, &finalizedFinalityData, nil)
+	err = builder.L2.ExecNode.SyncMonitor.SetFinalityData(&safeFinalityData, &finalizedFinalityData, nil)
 	Require(t, err)
 
 	checksFinalityData(t, "before out of sync", ctx, builder.L2, finalizedFinalityData.MsgIdx, safeFinalityData.MsgIdx)
 
 	// out of sync node
-	err = builder.L2.ExecNode.SyncMonitor.SetFinalityData(ctx, nil, nil, nil)
+	err = builder.L2.ExecNode.SyncMonitor.SetFinalityData(nil, nil, nil)
 	Require(t, err)
 
 	ensureFinalizedBlockDoesNotExist(t, ctx, builder.L2, "out of sync")

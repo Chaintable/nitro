@@ -23,7 +23,7 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/knadh/koanf"
 	"github.com/knadh/koanf/providers/confmap"
-	flag "github.com/spf13/pflag"
+	"github.com/spf13/pflag"
 	"github.com/syndtr/goleveldb/leveldb"
 
 	"github.com/ethereum/go-ethereum/accounts"
@@ -63,6 +63,7 @@ import (
 	"github.com/offchainlabs/nitro/solgen/go/rollupgen"
 	legacystaker "github.com/offchainlabs/nitro/staker/legacy"
 	"github.com/offchainlabs/nitro/staker/validatorwallet"
+	nitroutil "github.com/offchainlabs/nitro/util"
 	"github.com/offchainlabs/nitro/util/colors"
 	"github.com/offchainlabs/nitro/util/dbutil"
 	"github.com/offchainlabs/nitro/util/headerreader"
@@ -199,11 +200,13 @@ func mainImpl() int {
 	}
 
 	log.Info("Running Arbitrum nitro node", "revision", vcsRevision, "vcs.time", vcsTime)
+	log.Info("Resources detected", "GOMAXPROCS", nitroutil.GoMaxProcs())
 
 	if nodeConfig.Node.Dangerous.NoL1Listener {
 		nodeConfig.Node.ParentChainReader.Enable = false
 		nodeConfig.Node.BatchPoster.Enable = false
 		nodeConfig.Node.DelayedSequencer.Enable = false
+		nodeConfig.Init.ValidateGenesisAssertion = false
 	} else {
 		nodeConfig.Node.ParentChainReader.Enable = true
 	}
@@ -243,7 +246,7 @@ func mainImpl() int {
 	if sequencerNeedsKey || nodeConfig.Node.BatchPoster.ParentChainWallet.OnlyCreateKey {
 		l1TransactionOptsBatchPoster, dataSigner, err = util.OpenWallet("l1-batch-poster", &nodeConfig.Node.BatchPoster.ParentChainWallet, new(big.Int).SetUint64(nodeConfig.ParentChain.ID))
 		if err != nil {
-			flag.Usage()
+			pflag.Usage()
 			log.Crit("error opening Batch poster parent chain wallet", "path", nodeConfig.Node.BatchPoster.ParentChainWallet.Pathname, "account", nodeConfig.Node.BatchPoster.ParentChainWallet.Account, "err", err)
 		}
 		if nodeConfig.Node.BatchPoster.ParentChainWallet.OnlyCreateKey {
@@ -253,7 +256,7 @@ func mainImpl() int {
 	if validatorNeedsKey || nodeConfig.Node.Staker.ParentChainWallet.OnlyCreateKey {
 		l1TransactionOptsValidator, _, err = util.OpenWallet("l1-validator", &nodeConfig.Node.Staker.ParentChainWallet, new(big.Int).SetUint64(nodeConfig.ParentChain.ID))
 		if err != nil {
-			flag.Usage()
+			pflag.Usage()
 			log.Crit("error opening Validator parent chain wallet", "path", nodeConfig.Node.Staker.ParentChainWallet.Pathname, "account", nodeConfig.Node.Staker.ParentChainWallet.Account, "err", err)
 		}
 		if nodeConfig.Node.Staker.ParentChainWallet.OnlyCreateKey {
@@ -263,7 +266,7 @@ func mainImpl() int {
 
 	if nodeConfig.Node.Staker.Enable {
 		if !nodeConfig.Node.ParentChainReader.Enable {
-			flag.Usage()
+			pflag.Usage()
 			log.Crit("validator must have the parent chain reader enabled")
 		}
 		strategy, err := legacystaker.ParseStrategy(nodeConfig.Node.Staker.Strategy)
@@ -320,7 +323,7 @@ func mainImpl() int {
 		}
 		if !l1Reader.IsParentChainArbitrum() && !nodeConfig.Node.Dangerous.DisableBlobReader {
 			if nodeConfig.ParentChain.BlobClient.BeaconUrl == "" {
-				flag.Usage()
+				pflag.Usage()
 				log.Crit("a beacon chain RPC URL is required to read batches, but it was not configured (CLI argument: --parent-chain.blob-client.beacon-url [URL])")
 			}
 			blobClient, err := headerreader.NewBlobClient(nodeConfig.ParentChain.BlobClient, l1Client)
@@ -333,11 +336,11 @@ func mainImpl() int {
 
 	if nodeConfig.Node.Staker.OnlyCreateWalletContract {
 		if !nodeConfig.Node.Staker.UseSmartContractWallet {
-			flag.Usage()
+			pflag.Usage()
 			log.Crit("--node.validator.only-create-wallet-contract requires --node.validator.use-smart-contract-wallet")
 		}
 		if l1Reader == nil {
-			flag.Usage()
+			pflag.Usage()
 			log.Crit("--node.validator.only-create-wallet-contract conflicts with --node.dangerous.no-l1-listener")
 		}
 		// Just create validator smart wallet if needed then exit
@@ -368,7 +371,7 @@ func mainImpl() int {
 	}
 
 	if err := resourcemanager.Init(&nodeConfig.Node.ResourceMgmt); err != nil {
-		flag.Usage()
+		pflag.Usage()
 		log.Crit("Failed to start resource management module", "err", err)
 	}
 
@@ -379,13 +382,13 @@ func mainImpl() int {
 	}
 	stack, err := node.New(&stackConf)
 	if err != nil {
-		flag.Usage()
+		pflag.Usage()
 		log.Crit("failed to initialize geth stack", "err", err)
 	}
 	{
 		devAddr, err := addUnlockWallet(stack.AccountManager(), l2DevWallet)
 		if err != nil {
-			flag.Usage()
+			pflag.Usage()
 			log.Crit("error opening L2 dev wallet", "err", err)
 		}
 		if devAddr != (common.Address{}) {
@@ -434,18 +437,23 @@ func mainImpl() int {
 		log.Info("enabling custom tracer", "name", traceConfig.TracerName)
 	}
 
-	chainDb, l2BlockChain, err := openInitializeChainDb(ctx, stack, nodeConfig, new(big.Int).SetUint64(nodeConfig.Chain.ID), gethexec.DefaultCacheConfigFor(stack, &nodeConfig.Execution.Caching), &nodeConfig.Execution.StylusTarget, tracer, &nodeConfig.Persistent, l1Client, rollupAddrs)
+	if err := gethexec.PopulateStylusTargetCache(&nodeConfig.Execution.StylusTarget); err != nil {
+		log.Error("error populating stylus target cache", "err", err)
+		return 1
+	}
+
+	chainDb, l2BlockChain, err := openInitializeChainDb(ctx, stack, nodeConfig, new(big.Int).SetUint64(nodeConfig.Chain.ID), gethexec.DefaultCacheConfigFor(&nodeConfig.Execution.Caching), &nodeConfig.Execution.StylusTarget, tracer, &nodeConfig.Persistent, l1Client, rollupAddrs)
 	if l2BlockChain != nil {
 		deferFuncs = append(deferFuncs, func() { l2BlockChain.Stop() })
 	}
 	deferFuncs = append(deferFuncs, func() { closeDb(chainDb, "chainDb") })
 	if err != nil {
-		flag.Usage()
+		pflag.Usage()
 		log.Error("error initializing database", "err", err)
 		return 1
 	}
 
-	arbDb, err := stack.OpenDatabaseWithExtraOptions("arbitrumdata", 0, 0, "arbitrumdata/", false, nodeConfig.Persistent.Pebble.ExtraOptions("arbitrumdata"))
+	arbDb, err := stack.OpenDatabaseWithOptions("arbitrumdata", node.DatabaseOptions{MetricsNamespace: "arbitrumdata/", PebbleExtraOptions: nodeConfig.Persistent.Pebble.ExtraOptions("arbitrumdata"), NoFreezer: true})
 	deferFuncs = append(deferFuncs, func() { closeDb(arbDb, "arbDb") })
 	if err != nil {
 		log.Error("failed to open database", "err", err)
@@ -467,10 +475,6 @@ func mainImpl() int {
 		blocksReExecutor, err := blocksreexecutor.New(&nodeConfig.BlocksReExecutor, l2BlockChain, chainDb, fatalErrChan)
 		if err != nil {
 			log.Error("error initializing blocksReExecutor", "err", err)
-			return 1
-		}
-		if err := gethexec.PopulateStylusTargetCache(&nodeConfig.Execution.StylusTarget); err != nil {
-			log.Error("error populating stylus target cache", "err", err)
 			return 1
 		}
 		success := make(chan struct{})
@@ -500,7 +504,7 @@ func mainImpl() int {
 	}
 
 	if l2BlockChain.Config().ArbitrumChainParams.DataAvailabilityCommittee != nodeConfig.Node.DataAvailability.Enable {
-		flag.Usage()
+		pflag.Usage()
 		log.Error(fmt.Sprintf("data availability service usage for this chain is set to %v but --node.data-availability.enable is set to %v", l2BlockChain.Config().ArbitrumChainParams.DataAvailabilityCommittee, nodeConfig.Node.DataAvailability.Enable))
 		return 1
 	}
@@ -524,7 +528,8 @@ func mainImpl() int {
 		chainDb,
 		l2BlockChain,
 		l1Client,
-		func() *gethexec.Config { return &liveNodeConfig.Get().Execution },
+		&ExecutionNodeConfigFetcher{liveNodeConfig},
+		new(big.Int).SetUint64(nodeConfig.ParentChain.ID),
 		liveNodeConfig.Get().Node.TransactionStreamer.SyncTillBlock,
 	)
 	if err != nil {
@@ -548,7 +553,7 @@ func mainImpl() int {
 		execNode,
 		execNode,
 		arbDb,
-		&NodeConfigFetcher{liveNodeConfig},
+		&ConsensusNodeConfigFetcher{liveNodeConfig},
 		l2BlockChain.Config(),
 		l1Client,
 		&rollupAddrs,
@@ -710,7 +715,7 @@ func mainImpl() int {
 
 	err = execNode.InitializeTimeboost(ctx, chainInfo.ChainConfig)
 	if err != nil {
-		fatalErrChan <- fmt.Errorf("error intializing timeboost: %w", err)
+		fatalErrChan <- fmt.Errorf("error initializing timeboost: %w", err)
 	}
 
 	err = nil
@@ -786,7 +791,7 @@ var NodeConfigDefault = NodeConfig{
 	EnsureRollupDeployment: true,
 }
 
-func NodeConfigAddOptions(f *flag.FlagSet) {
+func NodeConfigAddOptions(f *pflag.FlagSet) {
 	genericconf.ConfConfigAddOptions("conf", f)
 	arbnode.ConfigAddOptions("node", f, true, true)
 	gethexec.ConfigAddOptions("execution", f)
@@ -891,7 +896,7 @@ func (c *NodeConfig) GetReloadInterval() time.Duration {
 }
 
 func ParseNode(ctx context.Context, args []string) (*NodeConfig, *genericconf.WalletConfig, error) {
-	f := flag.NewFlagSet("", flag.ContinueOnError)
+	f := pflag.NewFlagSet("", pflag.ContinueOnError)
 
 	NodeConfigAddOptions(f)
 
@@ -956,9 +961,10 @@ func ParseNode(ctx context.Context, args []string) (*NodeConfig, *genericconf.Wa
 		nodeConfig.Node.MessagePruner.Enable = false
 	}
 
-	if nodeConfig.Execution.Caching.Archive && nodeConfig.Execution.TxLookupLimit != 0 {
+	if nodeConfig.Execution.Caching.Archive && (!nodeConfig.Execution.TxIndexer.Enable || nodeConfig.Execution.TxIndexer.TxLookupLimit != 0) {
 		log.Info("retaining ability to lookup full transaction history as archive mode is enabled")
-		nodeConfig.Execution.TxLookupLimit = 0
+		nodeConfig.Execution.TxIndexer.Enable = true
+		nodeConfig.Execution.TxIndexer.TxLookupLimit = 0
 	}
 
 	err = nodeConfig.Validate()
@@ -1001,6 +1007,9 @@ func applyChainParameters(k *koanf.Koanf, chainId uint64, chainName string, l2Ch
 	}
 	if chainInfo.SecondaryFeedUrl != "" {
 		chainDefaults["node.feed.input.secondary-url"] = strings.Split(chainInfo.SecondaryFeedUrl, ",")
+	}
+	if chainInfo.FeedSigned {
+		chainDefaults["node.feed.input.verify.dangerous.accept-missing"] = false
 	}
 	if chainInfo.DasIndexUrl != "" {
 		chainDefaults["node.data-availability.enable"] = true
@@ -1078,12 +1087,20 @@ func initReorg(initConfig conf.InitConfig, chainConfig *params.ChainConfig, inbo
 	return inboxTracker.ReorgBatchesTo(batchCount)
 }
 
-type NodeConfigFetcher struct {
+type ConsensusNodeConfigFetcher struct {
 	*genericconf.LiveConfig[*NodeConfig]
 }
 
-func (f *NodeConfigFetcher) Get() *arbnode.Config {
+func (f *ConsensusNodeConfigFetcher) Get() *arbnode.Config {
 	return &f.LiveConfig.Get().Node
+}
+
+type ExecutionNodeConfigFetcher struct {
+	*genericconf.LiveConfig[*NodeConfig]
+}
+
+func (f *ExecutionNodeConfigFetcher) Get() *gethexec.Config {
+	return &f.LiveConfig.Get().Execution
 }
 
 func checkWasmModuleRootCompatibility(ctx context.Context, wasmConfig valnode.WasmConfig, l1Client *ethclient.Client, rollupAddrs chaininfo.RollupAddresses) error {

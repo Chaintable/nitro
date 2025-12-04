@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 
 	"github.com/offchainlabs/nitro/util/stopwaiter"
 	"github.com/offchainlabs/nitro/validator"
@@ -45,7 +45,7 @@ func (a *ValidationServerAPI) WasmModuleRoots() ([]common.Hash, error) {
 	return a.spawner.WasmModuleRoots()
 }
 
-func (a *ValidationServerAPI) StylusArchs() ([]ethdb.WasmTarget, error) {
+func (a *ValidationServerAPI) StylusArchs() ([]rawdb.WasmTarget, error) {
 	return a.spawner.StylusArchs(), nil
 }
 
@@ -63,18 +63,18 @@ type ExecServerAPI struct {
 	ValidationServerAPI
 	execSpawner validator.ExecutionSpawner
 
-	config server_arb.ArbitratorSpawnerConfigFecher
+	config server_arb.ArbitratorSpawnerConfigFetcher
 
 	runIdLock sync.Mutex
 	nextId    uint64
 	runs      map[uint64]*execRunEntry
 }
 
-func NewExecutionServerAPI(valSpawner validator.ValidationSpawner, execution validator.ExecutionSpawner, config server_arb.ArbitratorSpawnerConfigFecher) *ExecServerAPI {
+func NewExecutionServerAPI(valSpawner validator.ValidationSpawner, execution validator.ExecutionSpawner, config server_arb.ArbitratorSpawnerConfigFetcher) *ExecServerAPI {
 	return &ExecServerAPI{
 		ValidationServerAPI: *NewValidationServerAPI(valSpawner),
 		execSpawner:         execution,
-		nextId:              rand.Uint64(), // good-enough to aver reusing ids after reboot
+		nextId:              rand.Uint64(), // good-enough to avoid reusing ids after reboot
 		runs:                make(map[uint64]*execRunEntry),
 		config:              config,
 	}
@@ -212,10 +212,16 @@ func (a *ExecServerAPI) CheckAlive(ctx context.Context, execid uint64) error {
 }
 
 func (a *ExecServerAPI) CloseExec(execid uint64) {
-	run, err := a.getRun(execid)
-	if err != nil {
-		return // means not found
+	// Protect map access with runIdLock to avoid concurrent map read/write.
+	// Call Close() outside the lock to avoid holding the mutex during a potentially long operation.
+	a.runIdLock.Lock()
+	entry := a.runs[execid]
+	if entry != nil {
+		delete(a.runs, execid)
 	}
-	run.Close()
-	delete(a.runs, execid)
+	a.runIdLock.Unlock()
+
+	if entry != nil {
+		entry.run.Close()
+	}
 }

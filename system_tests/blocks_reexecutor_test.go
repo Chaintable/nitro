@@ -23,7 +23,9 @@ func testBlocksReExecutorModes(t *testing.T, onMultipleRanges bool) {
 	defer cancel()
 
 	builder := NewNodeBuilder(ctx).DefaultConfig(t, false)
-	builder.execConfig.Caching.StateScheme = rawdb.HashScheme
+	// For now PathDB is not supported
+	builder.RequireScheme(t, rawdb.HashScheme)
+
 	// This allows us to see reexecution of multiple ranges
 	if onMultipleRanges {
 		builder.execConfig.Caching.Archive = true
@@ -51,7 +53,8 @@ func testBlocksReExecutorModes(t *testing.T, onMultipleRanges bool) {
 	}
 
 	// Set Blocks config field if running blocks reexecution on multiple ranges
-	c := &blocksreexecutor.TestConfig
+	c := blocksreexecutor.TestConfig
+	c.ValidateMultiGas = true
 	if onMultipleRanges {
 		c.Blocks = `[[0, 29], [30, 59], [60, 99]]`
 	}
@@ -59,7 +62,7 @@ func testBlocksReExecutorModes(t *testing.T, onMultipleRanges bool) {
 	// Reexecute blocks at mode full
 	c.MinBlocksPerThread = 10
 	Require(t, c.Validate())
-	executorFull, err := blocksreexecutor.New(c, blockchain, builder.L2.ExecNode.ChainDB, feedErrChan)
+	executorFull, err := blocksreexecutor.New(&c, blockchain, builder.L2.ExecNode.ChainDB, feedErrChan)
 	Require(t, err)
 	success := make(chan struct{})
 	executorFull.Start(ctx, success)
@@ -73,7 +76,7 @@ func testBlocksReExecutorModes(t *testing.T, onMultipleRanges bool) {
 	c.Mode = "random"
 	c.MinBlocksPerThread = 20
 	Require(t, c.Validate())
-	executorRandom, err := blocksreexecutor.New(c, blockchain, builder.L2.ExecNode.ChainDB, feedErrChan)
+	executorRandom, err := blocksreexecutor.New(&c, blockchain, builder.L2.ExecNode.ChainDB, feedErrChan)
 	Require(t, err)
 	success = make(chan struct{})
 	executorRandom.Start(ctx, success)

@@ -39,7 +39,6 @@ import (
 	"github.com/offchainlabs/nitro/execution/gethexec"
 	"github.com/offchainlabs/nitro/solgen/go/localgen"
 	"github.com/offchainlabs/nitro/solgen/go/precompilesgen"
-	pgen "github.com/offchainlabs/nitro/solgen/go/precompilesgen"
 	"github.com/offchainlabs/nitro/util/arbmath"
 	"github.com/offchainlabs/nitro/util/colors"
 	"github.com/offchainlabs/nitro/util/testhelpers"
@@ -50,8 +49,9 @@ var oneEth = arbmath.UintToBig(1e18)
 
 var allWasmTargets = []string{string(rawdb.TargetWavm), string(rawdb.TargetArm64), string(rawdb.TargetAmd64), string(rawdb.TargetHost)}
 
+var localTargetOnly = []string{string(rawdb.LocalTarget())}
+
 func TestProgramKeccak(t *testing.T) {
-	t.Parallel()
 	t.Run("WithDefaultWasmTargets", func(t *testing.T) {
 		keccakTest(t, true)
 	})
@@ -64,7 +64,7 @@ func TestProgramKeccak(t *testing.T) {
 
 	t.Run("WithOnlyLocalTarget", func(t *testing.T) {
 		keccakTest(t, true, func(builder *NodeBuilder) {
-			builder.WithExtraArchs([]string{string(rawdb.LocalTarget())})
+			builder.WithExtraArchs(localTargetOnly)
 		})
 	})
 }
@@ -81,7 +81,7 @@ func keccakTest(t *testing.T, jit bool, builderOpts ...func(*NodeBuilder)) {
 
 	wasm, _ := readWasmFile(t, rustFile("keccak"))
 	otherAddressSameCode := deployContract(t, ctx, auth, l2client, wasm)
-	arbWasm, err := pgen.NewArbWasm(types.ArbWasmAddress, l2client)
+	arbWasm, err := precompilesgen.NewArbWasm(types.ArbWasmAddress, l2client)
 	Require(t, err)
 
 	colors.PrintBlue("program deployed to ", programAddress.Hex())
@@ -163,7 +163,6 @@ func keccakTest(t *testing.T, jit bool, builderOpts ...func(*NodeBuilder)) {
 }
 
 func TestProgramActivateTwice(t *testing.T) {
-	t.Parallel()
 	t.Run("WithDefaultWasmTargets", func(t *testing.T) {
 		testActivateTwice(t, true)
 	})
@@ -194,7 +193,7 @@ func testActivateTwice(t *testing.T, jit bool, builderOpts ...func(*NodeBuilder)
 		return receipt
 	}
 
-	arbOwner, err := pgen.NewArbOwner(types.ArbOwnerAddress, l2client)
+	arbOwner, err := precompilesgen.NewArbOwner(types.ArbOwnerAddress, l2client)
 	Require(t, err)
 	ensure(arbOwner.SetInkPrice(&auth, 1))
 
@@ -236,8 +235,8 @@ func testActivateTwice(t *testing.T, jit bool, builderOpts ...func(*NodeBuilder)
 	checkWasmStoreContent(t, wasmDb, builder.execConfig.StylusTarget.WasmTargets(), 1)
 
 	// mechanisms for creating calldata
-	activateProgram, _ := util.NewCallParser(pgen.ArbWasmABI, "activateProgram")
-	legacyError, _ := util.NewCallParser(pgen.ArbDebugABI, "legacyError")
+	activateProgram, _ := util.NewCallParser(precompilesgen.ArbWasmABI, "activateProgram")
+	legacyError, _ := util.NewCallParser(precompilesgen.ArbDebugABI, "legacyError")
 	callKeccak, _ := util.NewCallParser(localgen.ProgramTestABI, "callKeccak")
 	pack := func(data []byte, err error) []byte {
 		Require(t, err)
@@ -270,7 +269,6 @@ func testActivateTwice(t *testing.T, jit bool, builderOpts ...func(*NodeBuilder)
 }
 
 func TestStylusUpgrade(t *testing.T) {
-	t.Parallel()
 	testStylusUpgrade(t, true)
 }
 
@@ -291,7 +289,7 @@ func testStylusUpgrade(t *testing.T, jit bool) {
 		return receipt
 	}
 
-	arbOwner, err := pgen.NewArbOwner(types.ArbOwnerAddress, l2client)
+	arbOwner, err := precompilesgen.NewArbOwner(types.ArbOwnerAddress, l2client)
 	Require(t, err)
 	ensure(arbOwner.SetInkPrice(&auth, 1))
 
@@ -366,7 +364,6 @@ func testStylusUpgrade(t *testing.T, jit bool) {
 }
 
 func TestProgramErrors(t *testing.T) {
-	t.Parallel()
 	errorTest(t, true)
 }
 
@@ -408,7 +405,6 @@ func errorTest(t *testing.T, jit bool) {
 }
 
 func TestProgramStorage(t *testing.T) {
-	t.Parallel()
 	storageTest(t, true)
 }
 
@@ -509,7 +505,6 @@ func transientStorageTest(t *testing.T, jit bool) {
 }
 
 func TestProgramMath(t *testing.T) {
-	t.Parallel()
 	fastMathTest(t, true)
 }
 
@@ -537,7 +532,6 @@ func fastMathTest(t *testing.T, jit bool) {
 }
 
 func TestProgramCalls(t *testing.T) {
-	t.Parallel()
 	testCalls(t, true)
 }
 
@@ -551,7 +545,7 @@ func testCalls(t *testing.T, jit bool) {
 
 	// checks that ArbInfo.GetCode works properly
 	codeFromFile, _ := readWasmFile(t, rustFile("multicall"))
-	arbInfo, err := pgen.NewArbInfo(types.ArbInfoAddress, l2client)
+	arbInfo, err := precompilesgen.NewArbInfo(types.ArbInfoAddress, l2client)
 	Require(t, err)
 	codeFromArbInfo, err := arbInfo.GetCode(nil, callsAddr)
 	Require(t, err)
@@ -683,9 +677,9 @@ func testCalls(t *testing.T, jit bool) {
 	expectFailure(callsAddr, argsForMulticall(vm.STATICCALL, storeAddr, nil, writeKey), "")
 
 	// mechanisms for creating calldata
-	burnArbGas, _ := util.NewCallParser(pgen.ArbosTestABI, "burnArbGas")
-	customRevert, _ := util.NewCallParser(pgen.ArbDebugABI, "customRevert")
-	legacyError, _ := util.NewCallParser(pgen.ArbDebugABI, "legacyError")
+	burnArbGas, _ := util.NewCallParser(precompilesgen.ArbosTestABI, "burnArbGas")
+	customRevert, _ := util.NewCallParser(precompilesgen.ArbDebugABI, "customRevert")
+	legacyError, _ := util.NewCallParser(precompilesgen.ArbDebugABI, "legacyError")
 	callKeccak, _ := util.NewCallParser(localgen.ProgramTestABI, "callKeccak")
 	pack := func(data []byte, err error) []byte {
 		Require(t, err)
@@ -752,7 +746,6 @@ func testCalls(t *testing.T, jit bool) {
 }
 
 func TestProgramReturnData(t *testing.T) {
-	t.Parallel()
 	testReturnData(t, true)
 }
 
@@ -805,12 +798,10 @@ func testReturnData(t *testing.T, jit bool) {
 }
 
 func TestProgramLogs(t *testing.T) {
-	t.Parallel()
 	testLogs(t, true, false)
 }
 
 func TestProgramLogsWithTracing(t *testing.T) {
-	t.Parallel()
 	testLogs(t, true, true)
 }
 
@@ -919,7 +910,6 @@ func testLogs(t *testing.T, jit, tracing bool) {
 }
 
 func TestProgramCreate(t *testing.T) {
-	t.Parallel()
 	testCreate(t, true)
 }
 
@@ -961,7 +951,7 @@ func testCreate(t *testing.T, jit bool) {
 		}
 
 		// activate the program
-		arbWasm, err := pgen.NewArbWasm(types.ArbWasmAddress, l2client)
+		arbWasm, err := precompilesgen.NewArbWasm(types.ArbWasmAddress, l2client)
 		Require(t, err)
 		tx, err = arbWasm.ActivateProgram(&activateAuth, storeAddr)
 		if err != nil {
@@ -1015,9 +1005,11 @@ func testCreate(t *testing.T, jit bool) {
 }
 
 func TestProgramInfiniteLoopShouldCauseErrOutOfGas(t *testing.T) {
-	t.Parallel()
-	testInfiniteLoopCausesErrOutOfGas(t, true)
 	testInfiniteLoopCausesErrOutOfGas(t, false)
+}
+
+func TestProgramInfiniteLoopShouldCauseErrOutOfGas_Jit(t *testing.T) {
+	testInfiniteLoopCausesErrOutOfGas(t, true)
 }
 
 func testInfiniteLoopCausesErrOutOfGas(t *testing.T, jit bool) {
@@ -1040,7 +1032,6 @@ func testInfiniteLoopCausesErrOutOfGas(t *testing.T, jit bool) {
 }
 
 func TestProgramMemory(t *testing.T) {
-	t.Parallel()
 	testMemory(t, true)
 }
 
@@ -1059,12 +1050,13 @@ func testMemory(t *testing.T, jit bool) {
 		return receipt
 	}
 
-	arbOwner, err := pgen.NewArbOwner(types.ArbOwnerAddress, l2client)
+	arbOwner, err := precompilesgen.NewArbOwner(types.ArbOwnerAddress, l2client)
 	Require(t, err)
-	arbWasm, err := pgen.NewArbWasm(types.ArbWasmAddress, l2client)
+	arbWasm, err := precompilesgen.NewArbWasm(types.ArbWasmAddress, l2client)
 	Require(t, err)
 
 	ensure(arbOwner.SetInkPrice(&auth, 1e4))
+	ensure(arbOwner.SetMaxBlockGasLimit(&auth, 34000000))
 	ensure(arbOwner.SetMaxTxGasLimit(&auth, 34000000))
 
 	memoryAddr := deployWasm(t, ctx, auth, l2client, watFile("memory"))
@@ -1110,6 +1102,7 @@ func testMemory(t *testing.T, jit bool) {
 	}
 
 	// check that we'd normally run out of gas
+	ensure(arbOwner.SetMaxBlockGasLimit(&auth, 32000000))
 	ensure(arbOwner.SetMaxTxGasLimit(&auth, 32000000))
 	expectFailure(multiAddr, args, oneEth)
 
@@ -1120,7 +1113,7 @@ func testMemory(t *testing.T, jit bool) {
 	colors.PrintGrey("multicall.rs      ", multiAddr)
 	colors.PrintGrey("grow-and-call.wat ", growCallAddr)
 	colors.PrintGrey("grow-120.wat      ", growHugeAddr)
-	activate, _ := util.NewCallParser(pgen.ArbWasmABI, "activateProgram")
+	activate, _ := util.NewCallParser(precompilesgen.ArbWasmABI, "activateProgram")
 	pack := func(data []byte, err error) []byte {
 		Require(t, err)
 		return data
@@ -1198,7 +1191,6 @@ func testMemory(t *testing.T, jit bool) {
 }
 
 func TestProgramActivateFails(t *testing.T) {
-	t.Parallel()
 	testActivateFails(t, true)
 }
 
@@ -1208,7 +1200,7 @@ func testActivateFails(t *testing.T, jit bool) {
 	l2client := builder.L2.Client
 	defer cleanup()
 
-	arbWasm, err := pgen.NewArbWasm(types.ArbWasmAddress, l2client)
+	arbWasm, err := precompilesgen.NewArbWasm(types.ArbWasmAddress, l2client)
 	Require(t, err)
 
 	badExportWasm, _ := readWasmFile(t, watFile("bad-mods/bad-export"))
@@ -1237,7 +1229,6 @@ func testActivateFails(t *testing.T, jit bool) {
 }
 
 func TestProgramSdkStorage(t *testing.T) {
-	t.Parallel()
 	testSdkStorage(t, true)
 }
 
@@ -1306,11 +1297,11 @@ func TestStylusPrecompileMethodsSimple(t *testing.T) {
 	cleanup := builder.Build(t)
 	defer cleanup()
 
-	arbOwner, err := pgen.NewArbOwner(types.ArbOwnerAddress, builder.L2.Client)
+	arbOwner, err := precompilesgen.NewArbOwner(types.ArbOwnerAddress, builder.L2.Client)
 	Require(t, err)
-	arbDebug, err := pgen.NewArbDebug(types.ArbDebugAddress, builder.L2.Client)
+	arbDebug, err := precompilesgen.NewArbDebug(types.ArbDebugAddress, builder.L2.Client)
 	Require(t, err)
-	arbWasm, err := pgen.NewArbWasm(types.ArbWasmAddress, builder.L2.Client)
+	arbWasm, err := precompilesgen.NewArbWasm(types.ArbWasmAddress, builder.L2.Client)
 	Require(t, err)
 
 	ensure := func(tx *types.Transaction, err error) *types.Receipt {
@@ -1433,14 +1424,13 @@ func TestStylusPrecompileMethodsSimple(t *testing.T) {
 }
 
 func TestProgramActivationLogs(t *testing.T) {
-	t.Parallel()
 	builder, auth, cleanup := setupProgramTest(t, true)
 	l2client := builder.L2.Client
 	ctx := builder.ctx
 	defer cleanup()
 
 	wasm, _ := readWasmFile(t, watFile("memory"))
-	arbWasm, err := pgen.NewArbWasm(types.ArbWasmAddress, l2client)
+	arbWasm, err := precompilesgen.NewArbWasm(types.ArbWasmAddress, l2client)
 	Require(t, err)
 
 	nolimitAuth := auth
@@ -1473,7 +1463,6 @@ func TestProgramActivationLogs(t *testing.T) {
 }
 
 func TestProgramEarlyExit(t *testing.T) {
-	t.Parallel()
 	testEarlyExit(t, true)
 }
 
@@ -1545,14 +1534,14 @@ func TestProgramCacheManager(t *testing.T) {
 	}
 
 	// precompiles we plan to use
-	arbWasm, err := pgen.NewArbWasm(types.ArbWasmAddress, builder.L2.Client)
+	arbWasm, err := precompilesgen.NewArbWasm(types.ArbWasmAddress, builder.L2.Client)
 	Require(t, err)
-	arbWasmCache, err := pgen.NewArbWasmCache(types.ArbWasmCacheAddress, builder.L2.Client)
+	arbWasmCache, err := precompilesgen.NewArbWasmCache(types.ArbWasmCacheAddress, builder.L2.Client)
 	Require(t, err)
-	arbOwner, err := pgen.NewArbOwner(types.ArbOwnerAddress, builder.L2.Client)
+	arbOwner, err := precompilesgen.NewArbOwner(types.ArbOwnerAddress, builder.L2.Client)
 	Require(t, err)
 	ensure(arbOwner.SetInkPrice(&ownerAuth, 10_000))
-	parseLog := logParser[pgen.ArbWasmCacheUpdateProgramCache](t, pgen.ArbWasmCacheABI, "UpdateProgramCache")
+	parseLog := logParser[precompilesgen.ArbWasmCacheUpdateProgramCache](t, precompilesgen.ArbWasmCacheABI, "UpdateProgramCache")
 
 	// fund a user account we'll use to probe access-restricted methods
 	l2info.GenerateAccount("Anyone")
@@ -1630,7 +1619,7 @@ func testReturnDataCost(t *testing.T, arbosVersion uint64) {
 	defer cleanup()
 
 	// use a consistent ink price
-	arbOwner, err := pgen.NewArbOwner(types.ArbOwnerAddress, l2client)
+	arbOwner, err := precompilesgen.NewArbOwner(types.ArbOwnerAddress, l2client)
 	Require(t, err)
 	tx, err := arbOwner.SetInkPrice(&auth, 10000)
 	Require(t, err)
@@ -1684,7 +1673,10 @@ func testReturnDataCost(t *testing.T, arbosVersion uint64) {
 }
 
 func TestReturnDataCost(t *testing.T) {
-	testReturnDataCost(t, params.ArbosVersion_Stylus)
+	testReturnDataCost(t, params.ArbosVersion_StylusFixes)
+}
+
+func TestReturnDataCost_StylusFixes(t *testing.T) {
 	testReturnDataCost(t, params.ArbosVersion_StylusFixes)
 }
 
@@ -1693,7 +1685,7 @@ func setupProgramTest(t *testing.T, jit bool, builderOpts ...func(*NodeBuilder))
 ) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	builder := NewNodeBuilder(ctx).DefaultConfig(t, true)
+	builder := NewNodeBuilder(ctx).DefaultConfig(t, true).WithPreBoldDeployment()
 
 	for _, opt := range builderOpts {
 		opt(builder)
@@ -1701,7 +1693,7 @@ func setupProgramTest(t *testing.T, jit bool, builderOpts ...func(*NodeBuilder))
 
 	// setupProgramTest is being called by tests that validate blocks.
 	// For now validation only works with HashScheme set.
-	builder.execConfig.Caching.StateScheme = rawdb.HashScheme
+	builder.RequireScheme(t, rawdb.HashScheme)
 	builder.nodeConfig.BlockValidator.Enable = false
 	builder.nodeConfig.Staker.Enable = true
 	builder.nodeConfig.BatchPoster.Enable = true
@@ -1715,6 +1707,9 @@ func setupProgramTest(t *testing.T, jit bool, builderOpts ...func(*NodeBuilder))
 
 	builder.execConfig.Sequencer.MaxRevertGasReject = 0
 
+	// Increase call timeout to 30 seconds to avoid flaky CI
+	builder.execConfig.RPC.RPCEVMTimeout = 30 * time.Second
+
 	builderCleanup := builder.Build(t)
 
 	cleanup := func() {
@@ -1724,9 +1719,9 @@ func setupProgramTest(t *testing.T, jit bool, builderOpts ...func(*NodeBuilder))
 
 	auth := builder.L2Info.GetDefaultTransactOpts("Owner", ctx)
 
-	arbOwner, err := pgen.NewArbOwner(types.ArbOwnerAddress, builder.L2.Client)
+	arbOwner, err := precompilesgen.NewArbOwner(types.ArbOwnerAddress, builder.L2.Client)
 	Require(t, err)
-	arbDebug, err := pgen.NewArbDebug(types.ArbDebugAddress, builder.L2.Client)
+	arbDebug, err := precompilesgen.NewArbDebug(types.ArbDebugAddress, builder.L2.Client)
 	Require(t, err)
 
 	ensure := func(tx *types.Transaction, err error) *types.Receipt {
@@ -1788,7 +1783,7 @@ func activateWasm(
 	program common.Address,
 	name string,
 ) {
-	arbWasm, err := pgen.NewArbWasm(types.ArbWasmAddress, l2client)
+	arbWasm, err := precompilesgen.NewArbWasm(types.ArbWasmAddress, l2client)
 	Require(t, err)
 
 	timed(t, "activate "+name, func() {
@@ -1938,7 +1933,7 @@ func formatTime(duration time.Duration) string {
 	return fmt.Sprintf("%.2f%s", span, units[unit])
 }
 
-func testWasmRecreate(t *testing.T, builder *NodeBuilder, storeTx *types.Transaction, loadTx *types.Transaction, want []byte) {
+func testWasmRecreate(t *testing.T, builder *NodeBuilder, targetsBefore, targetsAfter []string, numModules int, removeWasmDbBetween bool, storeTx, loadTx *types.Transaction, want []byte) {
 	ctx := builder.ctx
 	l2info := builder.L2Info
 	l2client := builder.L2.Client
@@ -1950,7 +1945,9 @@ func testWasmRecreate(t *testing.T, builder *NodeBuilder, storeTx *types.Transac
 
 	testDir := t.TempDir()
 	nodeBStack := testhelpers.CreateStackConfigForTest(testDir)
-	nodeB, cleanupB := builder.Build2ndNode(t, &SecondNodeParams{stackConfig: nodeBStack})
+	nodeBExecConfigBefore := *builder.execConfig
+	nodeBExecConfigBefore.StylusTarget.ExtraArchs = targetsBefore
+	nodeB, cleanupB := builder.Build2ndNode(t, &SecondNodeParams{stackConfig: nodeBStack, execConfig: &nodeBExecConfigBefore})
 
 	_, err = EnsureTxSucceeded(ctx, nodeB.Client, storeTx)
 	Require(t, err)
@@ -1961,21 +1958,26 @@ func testWasmRecreate(t *testing.T, builder *NodeBuilder, storeTx *types.Transac
 	if !bytes.Equal(result, want) {
 		t.Fatalf("got wrong value, got %x, want %x", result, want)
 	}
+	wasmDb := nodeB.ExecNode.Backend.ArbInterface().BlockChain().StateCache().WasmStore()
+	checkWasmStoreContent(t, wasmDb, nodeBExecConfigBefore.StylusTarget.WasmTargets(), numModules)
 	// close nodeB
 	cleanupB()
 
-	// delete wasm dir of nodeB
-
-	wasmPath := filepath.Join(testDir, "system_tests.test", "wasm")
-	dirContents, err := os.ReadDir(wasmPath)
-	Require(t, err)
-	if len(dirContents) == 0 {
-		Fatal(t, "not contents found before delete")
+	wasmPath := filepath.Join(testDir, nodeBStack.Name, "wasm")
+	if removeWasmDbBetween {
+		// remove wasm dir of nodeB
+		dirContents, err := os.ReadDir(wasmPath)
+		Require(t, err)
+		if len(dirContents) == 0 {
+			Fatal(t, "not contents found before delete")
+		}
+		os.RemoveAll(wasmPath)
 	}
-	os.RemoveAll(wasmPath)
 
 	// recreate nodeB - using same source dir (wasm deleted)
-	nodeB, cleanupB = builder.Build2ndNode(t, &SecondNodeParams{stackConfig: nodeBStack})
+	nodeBExecConfigAfter := *builder.execConfig
+	nodeBExecConfigAfter.StylusTarget.ExtraArchs = targetsAfter
+	nodeB, cleanupB = builder.Build2ndNode(t, &SecondNodeParams{stackConfig: nodeBStack, execConfig: &nodeBExecConfigAfter})
 
 	// test nodeB - sees existing transaction
 	_, err = EnsureTxSucceeded(ctx, nodeB.Client, storeTx)
@@ -1997,16 +1999,85 @@ func testWasmRecreate(t *testing.T, builder *NodeBuilder, storeTx *types.Transac
 	_, err = EnsureTxSucceeded(ctx, nodeB.Client, loadTx)
 	Require(t, err)
 
+	wasmDb = nodeB.ExecNode.Backend.ArbInterface().BlockChain().StateCache().WasmStore()
+	checkWasmStoreContent(t, wasmDb, nodeBExecConfigAfter.StylusTarget.WasmTargets(), numModules)
+
 	cleanupB()
-	dirContents, err = os.ReadDir(wasmPath)
+	dirContents, err := os.ReadDir(wasmPath)
 	Require(t, err)
 	if len(dirContents) == 0 {
-		Fatal(t, "not contents found before delete")
+		Fatal(t, "no contents found before delete")
 	}
 	os.RemoveAll(wasmPath)
 }
 
 func TestWasmRecreate(t *testing.T) {
+	testCases := []struct {
+		name                string
+		removeWasmDbBetween bool
+		targetsBefore       []string
+		targetsAfter        []string
+	}{
+		{
+			name:                "with local target only with wasmdb removal",
+			removeWasmDbBetween: true,
+			targetsBefore:       localTargetOnly,
+			targetsAfter:        localTargetOnly,
+		},
+		{
+			name:                "with local target only without wasmdb removal",
+			removeWasmDbBetween: false,
+			targetsBefore:       localTargetOnly,
+			targetsAfter:        localTargetOnly,
+		},
+		{
+			name:                "with all targets with wasmdb removal",
+			removeWasmDbBetween: true,
+			targetsBefore:       allWasmTargets,
+			targetsAfter:        allWasmTargets,
+		},
+		{
+			name:                "with all targets without wasmdb removal",
+			removeWasmDbBetween: false,
+			targetsBefore:       allWasmTargets,
+			targetsAfter:        allWasmTargets,
+		},
+		{
+			name:                "more targets to recreate with wasmdb removal",
+			removeWasmDbBetween: true,
+			targetsBefore:       localTargetOnly,
+			targetsAfter:        allWasmTargets,
+		},
+		{
+			name:                "more targets to recreate without wasmdb removal",
+			removeWasmDbBetween: false,
+			targetsBefore:       localTargetOnly,
+			targetsAfter:        allWasmTargets,
+		},
+		{
+			name:                "less targets to recreate with wasmdb removal",
+			removeWasmDbBetween: true,
+			targetsBefore:       allWasmTargets,
+			targetsAfter:        localTargetOnly,
+		},
+		{
+			name:                "less targets to recreate without wasmdb removal",
+			removeWasmDbBetween: false,
+			targetsBefore:       allWasmTargets,
+			targetsAfter:        localTargetOnly,
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			testWasmRecreateWithCall(t, tc.targetsBefore, tc.targetsAfter, tc.removeWasmDbBetween)
+		})
+		t.Run(tc.name+" with delegate call", func(t *testing.T) {
+			testWasmRecreateWithDelegatecall(t, tc.targetsBefore, tc.targetsAfter, tc.removeWasmDbBetween)
+		})
+	}
+}
+
+func testWasmRecreateWithCall(t *testing.T, targetsBefore, targetsAfter []string, removeWasmDbBetween bool) {
 	builder, auth, cleanup := setupProgramTest(t, true)
 	ctx := builder.ctx
 	l2info := builder.L2Info
@@ -2021,10 +2092,10 @@ func TestWasmRecreate(t *testing.T) {
 	storeTx := l2info.PrepareTxTo("Owner", &storage, l2info.TransferGas, nil, argsForStorageWrite(zero, val))
 	loadTx := l2info.PrepareTxTo("Owner", &storage, l2info.TransferGas, nil, argsForStorageRead(zero))
 
-	testWasmRecreate(t, builder, storeTx, loadTx, val[:])
+	testWasmRecreate(t, builder, localTargetOnly, allWasmTargets, 1, false, storeTx, loadTx, val[:])
 }
 
-func TestWasmRecreateWithDelegatecall(t *testing.T) {
+func testWasmRecreateWithDelegatecall(t *testing.T, targetsBefore, targetsAfter []string, removeWasmDbBetween bool) {
 	builder, auth, cleanup := setupProgramTest(t, true)
 	ctx := builder.ctx
 	l2info := builder.L2Info
@@ -2043,7 +2114,7 @@ func TestWasmRecreateWithDelegatecall(t *testing.T) {
 	data = argsForMulticall(vm.DELEGATECALL, storage, big.NewInt(0), argsForStorageRead(zero))
 	loadTx := l2info.PrepareTxTo("Owner", &multicall, l2info.TransferGas, nil, data)
 
-	testWasmRecreate(t, builder, storeTx, loadTx, val[:])
+	testWasmRecreate(t, builder, localTargetOnly, allWasmTargets, 2, true, storeTx, loadTx, val[:])
 }
 
 // createMapFromDb is used in verifying if wasm store rebuilding works
@@ -2112,7 +2183,7 @@ func TestWasmStoreRebuilding(t *testing.T) {
 	cleanupB()
 
 	// delete wasm dir of nodeB
-	wasmPath := filepath.Join(testDir, "system_tests.test", "wasm")
+	wasmPath := filepath.Join(testDir, nodeBStack.Name, "wasm")
 	dirContents, err := os.ReadDir(wasmPath)
 	Require(t, err)
 	if len(dirContents) == 0 {
@@ -2133,7 +2204,7 @@ func TestWasmStoreRebuilding(t *testing.T) {
 
 	// Start rebuilding and wait for it to finish
 	log.Info("starting rebuilding of wasm store")
-	execConfig := nodeB.ExecNode.ConfigFetcher()
+	execConfig := builder.execConfig
 	Require(t, gethexec.RebuildWasmStore(ctx, wasmDbAfterDelete, nodeB.ExecNode.ChainDB, execConfig.RPC.MaxRecreateStateDepth, &execConfig.StylusTarget, bc, common.Hash{}, bc.CurrentBlock().Hash()))
 
 	wasmDbAfterRebuild := nodeB.ExecNode.Backend.ArbInterface().BlockChain().StateCache().WasmStore()
@@ -2191,14 +2262,14 @@ func readModuleHashes(t *testing.T, wasmDb ethdb.KeyValueStore) []common.Hash {
 	return modules
 }
 
-func checkWasmStoreContent(t *testing.T, wasmDb ethdb.KeyValueStore, expectedTargets []ethdb.WasmTarget, numModules int) {
+func checkWasmStoreContent(t *testing.T, wasmDb ethdb.KeyValueStore, expectedTargets []rawdb.WasmTarget, numModules int) {
 	t.Helper()
 	modules := readModuleHashes(t, wasmDb)
 	if len(modules) != numModules {
 		t.Fatalf("Unexpected number of module hashes found in wasm store, want: %d, have: %d", numModules, len(modules))
 	}
 	readAsm := func(module common.Hash, target string) []byte {
-		wasmTarget := ethdb.WasmTarget(target)
+		wasmTarget := rawdb.WasmTarget(target)
 		if !rawdb.IsSupportedWasmTarget(wasmTarget) {
 			t.Fatalf("internal test error - unsupported target passed to checkWasmStoreContent: %v", target)
 		}
@@ -2216,7 +2287,7 @@ func checkWasmStoreContent(t *testing.T, wasmDb ethdb.KeyValueStore, expectedTar
 		for _, target := range allWasmTargets {
 			var expected bool
 			for _, expectedTarget := range expectedTargets {
-				if ethdb.WasmTarget(target) == expectedTarget {
+				if rawdb.WasmTarget(target) == expectedTarget {
 					expected = true
 					break
 				}
@@ -2242,7 +2313,7 @@ func deployWasmAndGetEntrySizeEstimateBytes(
 	l2client := builder.L2.Client
 
 	wasm, _ := readWasmFile(t, rustFile(wasmName))
-	arbWasm, err := pgen.NewArbWasm(types.ArbWasmAddress, l2client)
+	arbWasm, err := precompilesgen.NewArbWasm(types.ArbWasmAddress, l2client)
 	Require(t, err, ", wasmName:", wasmName)
 
 	programAddress := deployContract(t, ctx, auth, l2client, wasm)
@@ -2260,8 +2331,10 @@ func deployWasmAndGetEntrySizeEstimateBytes(
 	statedb, err := builder.L2.ExecNode.Backend.ArbInterface().BlockChain().State()
 	Require(t, err, ", wasmName:", wasmName)
 
-	module, err := statedb.TryGetActivatedAsm(rawdb.LocalTarget(), log.ModuleHash)
-	Require(t, err, ", wasmName:", wasmName)
+	module := statedb.ActivatedAsm(rawdb.LocalTarget(), log.ModuleHash)
+	if len(module) == 0 {
+		Fatal(t, "missing asm for local target, wasmName:", wasmName)
+	}
 
 	entrySizeEstimateBytes := programs.GetEntrySizeEstimateBytes(module, log.Version, true)
 	// just a sanity check
@@ -2272,7 +2345,12 @@ func deployWasmAndGetEntrySizeEstimateBytes(
 }
 
 func TestWasmLruCache(t *testing.T) {
-	builder, auth, cleanup := setupProgramTest(t, true)
+	builder, auth, cleanup := setupProgramTest(t, true, func(b *NodeBuilder) {
+		// TestWasmLruCache shouldn't be run in parallel as it targets global Wasm LRU Cache,
+		// programs.ClearWasmLruCache is called in the test.
+		b.DontParalellise()
+	})
+
 	ctx := builder.ctx
 	l2info := builder.L2Info
 	l2client := builder.L2.Client
@@ -2368,8 +2446,10 @@ func checkLruCacheMetrics(t *testing.T, expected programs.WasmLruCacheMetrics) {
 }
 
 func TestWasmLongTermCache(t *testing.T) {
-	builder, ownerAuth, cleanup := setupProgramTest(t, true, func(builder *NodeBuilder) {
-		builder.WithStylusLongTermCache(true)
+	builder, ownerAuth, cleanup := setupProgramTest(t, true, func(b *NodeBuilder) {
+		// TestWasmLongTermCache shouldn't be run in parallel as it targets global Wasm Long Term Cache,
+		// programs.ClearWasmLongTermCache is called in the test.
+		b.DontParalellise()
 	})
 	ctx := builder.ctx
 	l2info := builder.L2Info
@@ -2384,9 +2464,9 @@ func TestWasmLongTermCache(t *testing.T) {
 		return receipt
 	}
 
-	arbWasmCache, err := pgen.NewArbWasmCache(types.ArbWasmCacheAddress, builder.L2.Client)
+	arbWasmCache, err := precompilesgen.NewArbWasmCache(types.ArbWasmCacheAddress, builder.L2.Client)
 	Require(t, err)
-	arbOwner, err := pgen.NewArbOwner(types.ArbOwnerAddress, builder.L2.Client)
+	arbOwner, err := precompilesgen.NewArbOwner(types.ArbOwnerAddress, builder.L2.Client)
 	Require(t, err)
 	ensure(arbOwner.SetInkPrice(&ownerAuth, 10_000))
 
@@ -2506,8 +2586,10 @@ func TestWasmLongTermCache(t *testing.T) {
 }
 
 func TestRepopulateWasmLongTermCacheFromLru(t *testing.T) {
-	builder, ownerAuth, cleanup := setupProgramTest(t, true, func(builder *NodeBuilder) {
-		builder.WithStylusLongTermCache(true)
+	builder, ownerAuth, cleanup := setupProgramTest(t, true, func(b *NodeBuilder) {
+		// TestRepopulateWasmLongTermCacheFromLru shouldn't be run in parallel as it targets global Wasm Long Term Cache and Wasm LRU Cache,
+		// programs.ClearWasmLongTermCache and programs.ClearWasmLruCache are called in the test.o
+		b.DontParalellise()
 	})
 	ctx := builder.ctx
 	l2info := builder.L2Info
@@ -2522,9 +2604,9 @@ func TestRepopulateWasmLongTermCacheFromLru(t *testing.T) {
 		return receipt
 	}
 
-	arbWasmCache, err := pgen.NewArbWasmCache(types.ArbWasmCacheAddress, builder.L2.Client)
+	arbWasmCache, err := precompilesgen.NewArbWasmCache(types.ArbWasmCacheAddress, builder.L2.Client)
 	Require(t, err)
-	arbOwner, err := pgen.NewArbOwner(types.ArbOwnerAddress, builder.L2.Client)
+	arbOwner, err := precompilesgen.NewArbOwner(types.ArbOwnerAddress, builder.L2.Client)
 	Require(t, err)
 	ensure(arbOwner.SetInkPrice(&ownerAuth, 10_000))
 

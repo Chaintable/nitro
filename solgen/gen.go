@@ -12,7 +12,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/accounts/abi/abigen"
 )
 
 type HardHatArtifact struct {
@@ -95,6 +95,10 @@ func main() {
 
 	for _, path := range filePaths {
 		if strings.Contains(path, ".dbg.json") {
+			continue
+		}
+
+		if strings.Contains(path, "precompiles") {
 			continue
 		}
 
@@ -218,6 +222,34 @@ func main() {
 		})
 	}
 
+	precompilesFilePaths, err := filepath.Glob(filepath.Join(parent, "contracts-local", "out", "precompiles", "*.sol", "*.json"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	precompilesModInfo := modules["precompilesgen"]
+	if precompilesModInfo == nil {
+		precompilesModInfo = &moduleInfo{}
+		modules["precompilesgen"] = precompilesModInfo
+	}
+	for _, path := range precompilesFilePaths {
+		_, file := filepath.Split(path)
+		name := file[:len(file)-5]
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			log.Fatal("could not read", path, "for contract", name, err)
+		}
+		artifact := FoundryArtifact{}
+		if err := json.Unmarshal(data, &artifact); err != nil {
+			log.Fatal("failed to parse contract", name, err)
+		}
+		precompilesModInfo.addArtifact(HardHatArtifact{
+			ContractName: name,
+			Abi:          artifact.Abi,
+			Bytecode:     artifact.Bytecode.Object,
+		})
+	}
+
 	// add upgrade executor module which is not compiled locally, but imported from 'nitro-contracts' dependencies
 	upgExecutorPath := filepath.Join(parent, "contracts", "node_modules", "@offchainlabs", "upgrade-executor", "build", "contracts", "src", "UpgradeExecutor.sol", "UpgradeExecutor.json")
 	_, err = os.Stat(upgExecutorPath)
@@ -241,13 +273,12 @@ func main() {
 
 	for module, info := range modules {
 
-		code, err := bind.Bind(
+		code, err := abigen.Bind(
 			info.contractNames,
 			info.abis,
 			info.bytecodes,
 			nil,
 			module,
-			bind.LangGo,
 			nil,
 			nil,
 		)

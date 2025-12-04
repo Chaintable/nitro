@@ -3,18 +3,15 @@ package arbtest
 import (
 	"testing"
 
-	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/params"
 
 	"github.com/offchainlabs/nitro/solgen/go/gas_dimensionsgen"
 	"github.com/offchainlabs/nitro/solgen/go/precompilesgen"
-	pgen "github.com/offchainlabs/nitro/solgen/go/precompilesgen"
 )
 
 // this test calls the ArbBlockNumber function on the ArbSys precompile
 func TestDimTxOpArbSysBlockNumberForSload(t *testing.T) {
-	t.Parallel()
 	ctx, cancel, builder, auth, cleanup := gasDimensionTestSetup(t, false)
 	defer cleanup()
 	defer cancel()
@@ -33,7 +30,6 @@ func TestDimTxOpArbSysBlockNumberForSload(t *testing.T) {
 // that in turn calls ActivateProgram on the ArbWasm precompile
 // this tests that the logic for counting gas works from a proxy contract
 func TestDimTxOpArbWasmActivateProgramForSstoreAndCallFromProxy(t *testing.T) {
-	t.Parallel()
 	builder, auth, cleanup := setupProgramTest(t, false, gasDimPrecompileBuilderOpts()...)
 	ctx := builder.ctx
 	l2client := builder.L2.Client
@@ -44,7 +40,7 @@ func TestDimTxOpArbWasmActivateProgramForSstoreAndCallFromProxy(t *testing.T) {
 	auth.GasLimit = 32000000 // skip gas estimation
 	program := deployContract(t, ctx, auth, l2client, wasm)
 
-	_, err := pgen.NewArbWasm(types.ArbWasmAddress, l2client)
+	_, err := precompilesgen.NewArbWasm(types.ArbWasmAddress, l2client)
 	Require(t, err)
 
 	_, precompileTestContract := deployGasDimensionTestContract(t, builder, auth, gas_dimensionsgen.DeployPrecompile)
@@ -61,7 +57,6 @@ func TestDimTxOpArbWasmActivateProgramForSstoreAndCallFromProxy(t *testing.T) {
 // this test calls the ActivateProgram function on the ArbWasm precompile
 // which calls SSTORE and CALL inside the precompile, for this test
 func TestDimTxOpActivateProgramForSstoreAndCall(t *testing.T) {
-	t.Parallel()
 	builder, auth, cleanup := setupProgramTest(t, false, gasDimPrecompileBuilderOpts()...)
 	ctx := builder.ctx
 	l2client := builder.L2.Client
@@ -72,7 +67,7 @@ func TestDimTxOpActivateProgramForSstoreAndCall(t *testing.T) {
 	auth.GasLimit = 32000000 // skip gas estimation
 	program := deployContract(t, ctx, auth, l2client, wasm)
 
-	arbWasm, err := pgen.NewArbWasm(types.ArbWasmAddress, l2client)
+	arbWasm, err := precompilesgen.NewArbWasm(types.ArbWasmAddress, l2client)
 	Require(t, err)
 
 	auth.Value = oneEth
@@ -92,7 +87,6 @@ func gasDimPrecompileBuilderOpts() []func(*NodeBuilder) {
 	builderOpts := func(builder *NodeBuilder) {
 		// Match gasDimensionTestSetup settings
 		builder.execConfig.Caching.Archive = true
-		builder.execConfig.Caching.StateScheme = rawdb.HashScheme
 		builder.execConfig.Sequencer.MaxRevertGasReject = 0
 		builder.WithArbOSVersion(params.MaxArbosVersionSupported)
 	}
