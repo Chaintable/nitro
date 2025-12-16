@@ -30,7 +30,7 @@ import (
 	"github.com/offchainlabs/nitro/solgen/go/osp_legacy_gen"
 	"github.com/offchainlabs/nitro/solgen/go/yulgen"
 	"github.com/offchainlabs/nitro/staker"
-	legacystaker "github.com/offchainlabs/nitro/staker/legacy"
+	"github.com/offchainlabs/nitro/staker/legacy"
 	"github.com/offchainlabs/nitro/validator"
 	"github.com/offchainlabs/nitro/validator/server_common"
 )
@@ -236,7 +236,7 @@ func RunChallengeTest(t *testing.T, asserterIsCorrect bool, useStubs bool, chall
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	builder := NewNodeBuilder(ctx).DefaultConfig(t, true)
+	builder := NewNodeBuilder(ctx).DefaultConfig(t, true).WithPreBoldDeployment().DontParalellise()
 	initialBalance := new(big.Int).Lsh(big.NewInt(1), 200)
 	l1Info := builder.L1Info
 	l1Info.GenerateGenesisAccount("deployer", initialBalance)
@@ -257,7 +257,7 @@ func RunChallengeTest(t *testing.T, asserterIsCorrect bool, useStubs bool, chall
 		mockSpawn, valStack = createMockValidationNode(t, ctx, &builder.valnodeConfig.Arbitrator)
 	} else {
 		// For now validation only works with HashScheme set
-		builder.execConfig.Caching.StateScheme = rawdb.HashScheme
+		builder.RequireScheme(t, rawdb.HashScheme)
 		_, valStack = createTestValidationNode(t, ctx, builder.valnodeConfig)
 	}
 	configByValidationNode(conf, valStack)

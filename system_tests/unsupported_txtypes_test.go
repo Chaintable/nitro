@@ -3,7 +3,6 @@
 
 // race detection makes things slow and miss timeouts
 //go:build !race
-// +build !race
 
 package arbtest
 
@@ -12,6 +11,7 @@ import (
 	"errors"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/holiman/uint256"
 
@@ -111,7 +111,9 @@ func TestBlobAndInternalTxsAsDelayedMsgReject(t *testing.T) {
 		Require(t, err)
 	}
 
-	blocknum, err := builder.L2.Client.BlockNumber(ctx)
+	receipt, err := WaitForTx(ctx, builder.L2.Client, delayedTx2.Hash(), time.Second*30)
+
+	blocknum := receipt.BlockNumber.Uint64()
 	Require(t, err)
 	for i := uint64(0); i <= blocknum; i++ {
 		block, err := builder.L2.Client.BlockByNumber(ctx, new(big.Int).SetUint64(i))

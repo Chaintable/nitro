@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/rpc"
 
@@ -23,7 +23,7 @@ import (
 	"github.com/offchainlabs/nitro/util/containers"
 	"github.com/offchainlabs/nitro/util/rpcclient"
 	"github.com/offchainlabs/nitro/validator"
-	validatorclient "github.com/offchainlabs/nitro/validator/client"
+	"github.com/offchainlabs/nitro/validator/client"
 	"github.com/offchainlabs/nitro/validator/server_api"
 	"github.com/offchainlabs/nitro/validator/server_arb"
 	"github.com/offchainlabs/nitro/validator/valnode"
@@ -62,8 +62,8 @@ func (s *mockSpawner) WasmModuleRoots() ([]common.Hash, error) {
 	return mockWasmModuleRoots, nil
 }
 
-func (s *mockSpawner) StylusArchs() []ethdb.WasmTarget {
-	return []ethdb.WasmTarget{"mock"}
+func (s *mockSpawner) StylusArchs() []rawdb.WasmTarget {
+	return []rawdb.WasmTarget{"mock"}
 }
 
 func (s *mockSpawner) Launch(entry *validator.ValidationInput, moduleRoot common.Hash) validator.ValidationRun {
@@ -203,11 +203,10 @@ func createMockValidationNode(t *testing.T, ctx context.Context, config *server_
 
 // mostly tests translation to/from json and running over network
 func TestValidationServerAPI(t *testing.T) {
-	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	_, validationDefault := createMockValidationNode(t, ctx, nil)
-	client := validatorclient.NewExecutionClient(StaticFetcherFrom(t, &rpcclient.TestClientConfig), validationDefault)
+	client := client.NewExecutionClient(StaticFetcherFrom(t, &rpcclient.TestClientConfig), validationDefault)
 	err := client.Start(ctx)
 	Require(t, err)
 
@@ -239,10 +238,17 @@ func TestValidationServerAPI(t *testing.T) {
 	}
 
 	valInput := validator.ValidationInput{
-		StartState: startState,
+		Id:            0,
+		HasDelayedMsg: false,
+		DelayedMsgNr:  0,
 		Preimages: daprovider.PreimagesMap{
 			arbutil.Keccak256PreimageType: globalstateToTestPreimages(endState),
 		},
+		UserWasms:  make(map[rawdb.WasmTarget]map[common.Hash][]byte),
+		BatchInfo:  []validator.BatchInfo{},
+		DelayedMsg: []byte{},
+		StartState: startState,
+		DebugChain: false,
 	}
 	valRun := client.Launch(&valInput, mockWasmModuleRoots[0])
 	res, err := valRun.Await(ctx)
@@ -273,11 +279,10 @@ func TestValidationServerAPI(t *testing.T) {
 }
 
 func TestValidationClientRoom(t *testing.T) {
-	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	mockSpawner, spawnerStack := createMockValidationNode(t, ctx, nil)
-	client := validatorclient.NewExecutionClient(StaticFetcherFrom(t, &rpcclient.TestClientConfig), spawnerStack)
+	client := client.NewExecutionClient(StaticFetcherFrom(t, &rpcclient.TestClientConfig), spawnerStack)
 	err := client.Start(ctx)
 	Require(t, err)
 
@@ -302,10 +307,17 @@ func TestValidationClientRoom(t *testing.T) {
 	}
 
 	valInput := validator.ValidationInput{
-		StartState: startState,
+		Id:            0,
+		HasDelayedMsg: false,
+		DelayedMsgNr:  0,
 		Preimages: daprovider.PreimagesMap{
 			arbutil.Keccak256PreimageType: globalstateToTestPreimages(endState),
 		},
+		UserWasms:  make(map[rawdb.WasmTarget]map[common.Hash][]byte),
+		BatchInfo:  []validator.BatchInfo{},
+		DelayedMsg: []byte{},
+		StartState: startState,
+		DebugChain: false,
 	}
 
 	valRuns := make([]validator.ValidationRun, 0, 4)
@@ -352,7 +364,6 @@ func TestValidationClientRoom(t *testing.T) {
 }
 
 func TestExecutionKeepAlive(t *testing.T) {
-	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	_, validationDefault := createMockValidationNode(t, ctx, nil)
@@ -361,14 +372,24 @@ func TestExecutionKeepAlive(t *testing.T) {
 	_, validationShortTO := createMockValidationNode(t, ctx, &shortTimeoutConfig)
 	configFetcher := StaticFetcherFrom(t, &rpcclient.TestClientConfig)
 
-	clientDefault := validatorclient.NewExecutionClient(configFetcher, validationDefault)
+	clientDefault := client.NewExecutionClient(configFetcher, validationDefault)
 	err := clientDefault.Start(ctx)
 	Require(t, err)
-	clientShortTO := validatorclient.NewExecutionClient(configFetcher, validationShortTO)
+	clientShortTO := client.NewExecutionClient(configFetcher, validationShortTO)
 	err = clientShortTO.Start(ctx)
 	Require(t, err)
 
-	valInput := validator.ValidationInput{}
+	valInput := validator.ValidationInput{
+		Id:            0,
+		HasDelayedMsg: false,
+		DelayedMsgNr:  0,
+		Preimages:     daprovider.PreimagesMap{},
+		UserWasms:     make(map[rawdb.WasmTarget]map[common.Hash][]byte),
+		BatchInfo:     []validator.BatchInfo{},
+		DelayedMsg:    []byte{},
+		StartState:    validator.GoGlobalState{},
+		DebugChain:    false,
+	}
 	runDefault, err := clientDefault.CreateExecutionRun(mockWasmModuleRoots[0], &valInput, false).Await(ctx)
 	Require(t, err)
 	runShortTO, err := clientShortTO.CreateExecutionRun(mockWasmModuleRoots[0], &valInput, false).Await(ctx)
@@ -394,6 +415,7 @@ func (m *mockBlockRecorder) RecordBlockCreation(
 	ctx context.Context,
 	pos arbutil.MessageIndex,
 	msg *arbostypes.MessageWithMetadata,
+	wasmTargets []rawdb.WasmTarget,
 ) (*execution.RecordResult, error) {
 	_, globalpos, err := m.validator.GlobalStatePositionsAtCount(pos + 1)
 	if err != nil {

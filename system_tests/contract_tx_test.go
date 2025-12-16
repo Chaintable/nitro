@@ -22,7 +22,6 @@ import (
 )
 
 func TestContractTxDeploy(t *testing.T) {
-	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	builder := NewNodeBuilder(ctx).DefaultConfig(t, false)
@@ -82,8 +81,9 @@ func TestContractTxDeploy(t *testing.T) {
 						RequestId:   &contractTx.RequestId,
 						L1BaseFee:   &big.Int{},
 					},
-					L2msg:        l2Msg,
-					BatchGasCost: new(uint64),
+					L2msg:              l2Msg,
+					LegacyBatchGasCost: nil,
+					BatchDataStats:     nil,
 				},
 				DelayedMessagesRead: delayedMessagesRead,
 			},

@@ -3,7 +3,6 @@
 
 // race detection makes things slow and miss timeouts
 //go:build !race
-// +build !race
 
 package arbtest
 
@@ -20,7 +19,6 @@ import (
 )
 
 func TestInfraFee(t *testing.T) {
-	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

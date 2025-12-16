@@ -53,14 +53,13 @@ import (
 )
 
 func TestTimeboostTxsTimeoutByBlock(t *testing.T) {
-	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	tmpDir := t.TempDir()
 
 	numTxs, blockBasedTimeout := uint64(10), uint64(5)
-	auctionContractAddr, aliceBidderClient, bobBidderClient, roundDuration, builderSeq, cleanupSeq, _, _ := setupExpressLaneAuction(t, tmpDir, ctx, 0, blockBasedTimeout)
+	auctionContractAddr, aliceBidderClient, bobBidderClient, roundDuration, builderSeq, cleanupSeq, _, _, _ := setupExpressLaneAuction(t, tmpDir, ctx, 0, blockBasedTimeout)
 	seqClient, seqInfo := builderSeq.L2.Client, builderSeq.L2Info
 	defer cleanupSeq()
 	seqInfo.GenerateAccount("User2")
@@ -143,13 +142,12 @@ func TestTimeboostAuctionResolutionDuringATieMultipleRuns(t *testing.T) {
 }
 
 func testAuctionResolutionDuringATie(t *testing.T, multiRuns bool) {
-	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	tmpDir := t.TempDir()
 
-	auctionContractAddr, aliceBidderClient, bobBidderClient, _, builderSeq, cleanupSeq, _, _ := setupExpressLaneAuction(t, tmpDir, ctx, 0, 0)
+	auctionContractAddr, aliceBidderClient, bobBidderClient, _, builderSeq, cleanupSeq, _, _, _ := setupExpressLaneAuction(t, tmpDir, ctx, 0, 0)
 	_, seqClient, seqInfo := builderSeq.L2.ConsensusNode, builderSeq.L2.Client, builderSeq.L2Info
 	defer cleanupSeq()
 
@@ -169,9 +167,9 @@ func testAuctionResolutionDuringATie(t *testing.T, multiRuns bool) {
 	for {
 		// For the next round, we will send equal bids and verify we get the correct winner
 		t.Logf("Alice and Bob now submitting their equal bids at %v", time.Now())
-		aliceBid, err := aliceBidderClient.Bid(ctx, big.NewInt(1), aliceAddr)
+		aliceBid, err := aliceBidderClient.Bid(ctx, big.NewInt(2), aliceAddr)
 		Require(t, err)
-		bobBid, err := bobBidderClient.Bid(ctx, big.NewInt(1), bobAddr)
+		bobBid, err := bobBidderClient.Bid(ctx, big.NewInt(2), bobAddr)
 		Require(t, err)
 		t.Logf("Alice bid %+v", aliceBid)
 		t.Logf("Bob bid %+v", bobBid)
@@ -243,22 +241,21 @@ func testAuctionResolutionDuringATie(t *testing.T, multiRuns bool) {
 	}
 }
 
-func TestTimeboostExpressLaneTxsHandlingDuringSequencerSwapDueToPriorities(t *testing.T) {
+func TestTimeboostExpressLaneTxsHandlingDuringSequencerSwapDueToPrioritiesFlaky(t *testing.T) {
 	testTxsHandlingDuringSequencerSwap(t, false)
 }
 
-func TestTimeboostExpressLaneTxsHandlingDuringSequencerSwapDueToActiveSequencerCrashing(t *testing.T) {
+func TestTimeboostExpressLaneTxsHandlingDuringSequencerSwapDueToActiveSequencerCrashingFlaky(t *testing.T) {
 	testTxsHandlingDuringSequencerSwap(t, true)
 }
 
 func testTxsHandlingDuringSequencerSwap(t *testing.T, dueToCrash bool) {
-	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	tmpDir := t.TempDir()
 
-	auctionContractAddr, aliceBidderClient, bobBidderClient, roundDuration, builderSeq, cleanupSeq, forwarder, cleanupForwarder := setupExpressLaneAuction(t, tmpDir, ctx, withForwardingSeq, 0)
+	auctionContractAddr, aliceBidderClient, bobBidderClient, roundDuration, builderSeq, cleanupSeq, forwarder, cleanupForwarder, _ := setupExpressLaneAuction(t, tmpDir, ctx, withForwardingSeq, 0)
 	seqB, seqClientB, seqInfo := builderSeq.L2.ConsensusNode, builderSeq.L2.Client, builderSeq.L2Info
 	seqA := forwarder.ConsensusNode
 	if !dueToCrash {
@@ -328,7 +325,7 @@ func testTxsHandlingDuringSequencerSwap(t *testing.T, dueToCrash bool) {
 	currentChosen, err := redisCoordinatorGetter.CurrentChosenSequencer(ctx)
 	Require(t, err)
 	if currentChosen != seqB.Stack.HTTPEndpoint() {
-		t.Fatalf("unexepcted current chosen sequencer. Want: %s, Got: %s", seqB.Stack.HTTPEndpoint(), currentChosen)
+		t.Fatalf("unexpected current chosen sequencer. Want: %s, Got: %s", seqB.Stack.HTTPEndpoint(), currentChosen)
 	}
 	redisCoordinatorSetter := &rediscoordinator.RedisCoordinator{RedisCoordinator: redisCoordinatorGetter}
 
@@ -380,14 +377,13 @@ func testTxsHandlingDuringSequencerSwap(t *testing.T, dueToCrash bool) {
 	}
 }
 
-func TestTimeboostForwardingExpressLaneTxs(t *testing.T) {
-	t.Parallel()
+func TestTimeboostForwardingExpressLaneTxsFlaky(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	tmpDir := t.TempDir()
 
-	auctionContractAddr, aliceBidderClient, bobBidderClient, roundDuration, builderSeq, cleanupSeq, forwarder, cleanupForwarder := setupExpressLaneAuction(t, tmpDir, ctx, withForwardingSeq, 0)
+	auctionContractAddr, aliceBidderClient, bobBidderClient, roundDuration, builderSeq, cleanupSeq, forwarder, cleanupForwarder, _ := setupExpressLaneAuction(t, tmpDir, ctx, withForwardingSeq, 0)
 	seqClient, seqInfo := builderSeq.L2.Client, builderSeq.L2Info
 	defer cleanupSeq()
 	defer cleanupForwarder()
@@ -421,14 +417,13 @@ func TestTimeboostForwardingExpressLaneTxs(t *testing.T) {
 	verifyControllerAdvantage(t, ctx, seqClient, expressLaneClient, seqInfo, "Bob", "Alice")
 }
 
-func TestTimeboostExpressLaneTransactionHandlingComplex(t *testing.T) {
-	t.Parallel()
+func TestTimeboostExpressLaneTransactionHandlingComplexFlaky(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	tmpDir := t.TempDir()
 
-	auctionContractAddr, aliceBidderClient, bobBidderClient, roundDuration, builderSeq, cleanupSeq, _, _ := setupExpressLaneAuction(t, tmpDir, ctx, 0, 0)
+	auctionContractAddr, aliceBidderClient, bobBidderClient, roundDuration, builderSeq, cleanupSeq, _, _, _ := setupExpressLaneAuction(t, tmpDir, ctx, 0, 0)
 	seq, seqClient, seqInfo := builderSeq.L2.ConsensusNode, builderSeq.L2.Client, builderSeq.L2Info
 	defer cleanupSeq()
 
@@ -523,13 +518,12 @@ func TestTimeboostExpressLaneTransactionHandlingComplex(t *testing.T) {
 }
 
 func TestTimeboostExpressLaneTransactionHandling(t *testing.T) {
-	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	tmpDir := t.TempDir()
 
-	auctionContractAddr, aliceBidderClient, bobBidderClient, roundDuration, builderSeq, cleanupSeq, _, _ := setupExpressLaneAuction(t, tmpDir, ctx, 0, 0)
+	auctionContractAddr, aliceBidderClient, bobBidderClient, roundDuration, builderSeq, cleanupSeq, _, _, _ := setupExpressLaneAuction(t, tmpDir, ctx, 0, 0)
 	seq, seqClient, seqInfo := builderSeq.L2.ConsensusNode, builderSeq.L2.Client, builderSeq.L2Info
 	defer cleanupSeq()
 
@@ -668,8 +662,6 @@ func dbKey(prefix []byte, pos uint64) []byte {
 }
 
 func TestTimeboostBulkBlockMetadataFetcher(t *testing.T) {
-	t.Parallel()
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -930,7 +922,7 @@ func TestTimeboostBulkBlockMetadataAPI(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	builder := NewNodeBuilder(ctx).DefaultConfig(t, false)
+	builder := NewNodeBuilder(ctx).DefaultConfig(t, false).DontParalellise()
 	builder.nodeConfig.TransactionStreamer.TrackBlockMetadataFrom = 1
 	builder.execConfig.BlockMetadataApiCacheSize = 0 // Caching is disabled
 	cleanup := builder.Build(t)
@@ -1028,9 +1020,18 @@ func TestTimeboostBulkBlockMetadataAPI(t *testing.T) {
 
 	// A Reorg event should clear the cache, hence the data fetched now should be accurate
 	Require(t, builder.L2.ConsensusNode.TxStreamer.ReorgAt(10))
-	err = l2rpc.CallContext(ctx, &result, "arb_getRawBlockMetadata", rpc.BlockNumber(start), rpc.BlockNumber(end))
-	Require(t, err)
-	if !bytes.Equal(updatedBlockMetadata, result[0].RawMetadata) {
+	// Give time for BulkBlockMetadataFetcher to receive the reorg event and clear its cache
+	var succeeded bool
+	for range 10 {
+		err = l2rpc.CallContext(ctx, &result, "arb_getRawBlockMetadata", rpc.BlockNumber(start), rpc.BlockNumber(end))
+		Require(t, err)
+		if bytes.Equal(updatedBlockMetadata, result[0].RawMetadata) {
+			succeeded = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !succeeded {
 		t.Fatal("BlockMetadata should've been fetched from db and not the cache")
 	}
 }
@@ -1136,14 +1137,13 @@ func TestTimeboostBulkBlockMetadataAPI(t *testing.T) {
 // 	verifyControllerChange(winnerRound, aliceOpts.From, bobOpts.From)     // Alice transfers control to Bob before the round begins
 // }
 
-func TestTimeboostSequencerFeed_ExpressLaneAuction_ExpressLaneTxsHaveAdvantage(t *testing.T) {
-	t.Parallel()
+func TestTimeboostSequencerFeed_ExpressLaneAuction_ExpressLaneTxsHaveAdvantageFlaky(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	tmpDir := t.TempDir()
 
-	auctionContractAddr, aliceBidderClient, bobBidderClient, roundDuration, builderSeq, cleanupSeq, _, _ := setupExpressLaneAuction(t, tmpDir, ctx, 0, 0)
+	auctionContractAddr, aliceBidderClient, bobBidderClient, roundDuration, builderSeq, cleanupSeq, _, _, _ := setupExpressLaneAuction(t, tmpDir, ctx, 0, 0)
 	seq, seqClient, seqInfo := builderSeq.L2.ConsensusNode, builderSeq.L2.Client, builderSeq.L2Info
 	defer cleanupSeq()
 
@@ -1176,15 +1176,13 @@ func TestTimeboostSequencerFeed_ExpressLaneAuction_ExpressLaneTxsHaveAdvantage(t
 	verifyControllerAdvantage(t, ctx, seqClient, expressLaneClient, seqInfo, "Bob", "Alice")
 }
 
-func TestTimeboostSequencerFeed_ExpressLaneAuction_InnerPayloadNoncesAreRespected_TimeboostedFieldIsCorrect(t *testing.T) {
-	t.Parallel()
-
+func TestTimeboostSequencerFeed_ExpressLaneAuction_InnerPayloadNoncesAreRespected_TimeboostedFieldIsCorrectFlaky(t *testing.T) {
 	logHandler := testhelpers.InitTestLog(t, log.LevelInfo)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	tmpDir := t.TempDir()
-	auctionContractAddr, aliceBidderClient, bobBidderClient, roundDuration, builderSeq, cleanupSeq, feedListener, cleanupFeedListener := setupExpressLaneAuction(t, tmpDir, ctx, withFeedListener, 0)
+	auctionContractAddr, aliceBidderClient, bobBidderClient, roundDuration, builderSeq, cleanupSeq, feedListener, cleanupFeedListener, _ := setupExpressLaneAuction(t, tmpDir, ctx, withFeedListener, 0)
 	seq, seqClient, seqInfo := builderSeq.L2.ConsensusNode, builderSeq.L2.Client, builderSeq.L2Info
 	defer cleanupSeq()
 	defer cleanupFeedListener()
@@ -1300,7 +1298,7 @@ func TestTimeboostSequencerFeed_ExpressLaneAuction_InnerPayloadNoncesAreRespecte
 	verifyTimeboostedCorrectness(t, ctx, "Alice", seq, seqClient, false, aliceTx, aliceBlock)
 	verifyTimeboostedCorrectness(t, ctx, "Charlie", seq, seqClient, true, charlie0, charlieBlock)
 
-	// Verify that timeboosted byte array receieved via sequencer feed is correct
+	// Verify that timeboosted byte array received via sequencer feed is correct
 	_, err = WaitForTx(ctx, feedListener.Client, charlie0.Hash(), time.Second*5)
 	Require(t, err)
 	_, err = WaitForTx(ctx, feedListener.Client, aliceTx.Hash(), time.Second*5)
@@ -1310,6 +1308,24 @@ func TestTimeboostSequencerFeed_ExpressLaneAuction_InnerPayloadNoncesAreRespecte
 
 	if logHandler.WasLogged(arbnode.BlockHashMismatchLogMsg) {
 		t.Fatal("BlockHashMismatchLogMsg was logged unexpectedly")
+	}
+}
+
+func TestTimeboostBidValidator_FailEthcallValidation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tmpDir := t.TempDir()
+
+	_, _, bobBidderClient, _, builderSeq, cleanupSeq, _, _, bidValidator := setupExpressLaneAuction(t, tmpDir, ctx, 0, 0)
+	_, _, seqInfo := builderSeq.L2.ConsensusNode, builderSeq.L2.Client, builderSeq.L2Info
+	defer cleanupSeq()
+
+	// We set reservePrice to a lower value (0) than what it is on-chain (3), so that validator's initial checks pass, but eth_call validation fails
+	bidValidator.SetReservePrice(common.Big0)
+	_, err := bobBidderClient.Bid(ctx, big.NewInt(1), seqInfo.GetAddress("Bob"))
+	if err == nil {
+		t.Fatal("bidValidator failed to reject bid with lower than reservePrice amount, eth_call validation failed")
 	}
 }
 
@@ -1338,7 +1354,7 @@ func verifyTimeboostedCorrectness(t *testing.T, ctx context.Context, user string
 				t.Fatalf("incorrect timeboosted bit for %s's tx, it should be timeboosted", user)
 			}
 		} else if got {
-			// Other tx's right now shouln't be timeboosted
+			// Other tx's right now shouldn't be timeboosted
 			t.Fatalf("incorrect timeboosted bit for nonspecified tx with index: %d, it shouldn't be timeboosted", txIndex)
 		}
 	}
@@ -1358,9 +1374,9 @@ func placeBidsAndDecideWinner(t *testing.T, ctx context.Context, seqClient *ethc
 
 	// We are now in the bidding round, both issue their bids. winner will win
 	t.Logf("%s and %s now submitting their bids at %v", winner, loser, time.Now())
-	winnerBid, err := winnerBidderClient.Bid(ctx, big.NewInt(2), seqInfo.GetAddress(winner))
+	winnerBid, err := winnerBidderClient.Bid(ctx, big.NewInt(3), seqInfo.GetAddress(winner))
 	Require(t, err)
-	loserBid, err := loserBidderClient.Bid(ctx, big.NewInt(1), seqInfo.GetAddress(loser))
+	loserBid, err := loserBidderClient.Bid(ctx, big.NewInt(2), seqInfo.GetAddress(loser))
 	Require(t, err)
 	t.Logf("%s bid %+v", winner, winnerBid)
 	t.Logf("%s bid %+v", loser, loserBid)
@@ -1464,7 +1480,7 @@ func setupExpressLaneAuction(
 	ctx context.Context,
 	extraNodeTy extraNodeType,
 	queueTimeoutInBlocks uint64,
-) (common.Address, *timeboost.BidderClient, *timeboost.BidderClient, time.Duration, *NodeBuilder, func(), *TestClient, func()) {
+) (common.Address, *timeboost.BidderClient, *timeboost.BidderClient, time.Duration, *NodeBuilder, func(), *TestClient, func(), *timeboost.BidValidator) {
 	seqPort := getRandomPort(t)
 	forwarderPort := getRandomPort(t)
 
@@ -1472,7 +1488,7 @@ func setupExpressLaneAuction(
 	expressLaneRedisURL := redisutil.CreateTestRedis(ctx, t)
 	initRedisForTest(t, ctx, expressLaneRedisURL, nodeNames)
 
-	builderSeq := NewNodeBuilder(ctx).DefaultConfig(t, false)
+	builderSeq := NewNodeBuilder(ctx).DefaultConfig(t, false).DontParalellise()
 	builderSeq.isSequencer = true
 	builderSeq.l2StackConfig.HTTPHost = "localhost"
 	builderSeq.l2StackConfig.HTTPPort = seqPort
@@ -1500,7 +1516,7 @@ func setupExpressLaneAuction(
 	var cleanupExtraNode func()
 	switch extraNodeTy {
 	case withForwardingSeq:
-		extraNodebuilder := NewNodeBuilder(ctx).DefaultConfig(t, false)
+		extraNodebuilder := NewNodeBuilder(ctx).DefaultConfig(t, false).DontParalellise()
 		extraNodebuilder.isSequencer = true
 		extraNodebuilder.takeOwnership = false
 		extraNodebuilder.l2StackConfig.HTTPHost = "localhost"
@@ -1528,7 +1544,7 @@ func setupExpressLaneAuction(
 			t.Fatalf("failed to cast listener address to *net.TCPAddr")
 		}
 		port := tcpAddr.Port
-		extraNodebuilder := NewNodeBuilder(ctx).DefaultConfig(t, false)
+		extraNodebuilder := NewNodeBuilder(ctx).DefaultConfig(t, false).DontParalellise()
 		extraNodebuilder.takeOwnership = false
 		extraNodebuilder.nodeConfig.Feed.Input = *newBroadcastClientConfigTest(port)
 		extraNodebuilder.nodeConfig.Feed.Input.Timeout = broadcastclient.DefaultConfig.Timeout
@@ -1621,7 +1637,7 @@ func setupExpressLaneAuction(
 	biddingToken := erc20Addr
 	auctionClosingSeconds := bidRoundSeconds / 2
 	reserveSubmissionSeconds := uint64(1)
-	minReservePrice := big.NewInt(1) // 1 wei.
+	minReservePrice := big.NewInt(2) // 1 wei.
 	roleAdmin := auctioneerAddr
 	tx, err = auctionContract.Initialize(
 		&ownerOpts,
@@ -1721,6 +1737,7 @@ func setupExpressLaneAuction(
 
 	expressLaneTracker.Start(ctx)
 	builderSeq.execConfig.Sequencer.Timeboost.Enable = true // Prevents race in sequencer where expressLaneService is read inside publishTransactionToQueue
+	builderSeq.L2.ExecutionConfigFetcher.Set(builderSeq.execConfig)
 
 	// Set up an autonomous auction contract service that runs in the background in this test.
 	redisURL := redisutil.CreateTestRedis(ctx, t)
@@ -1748,11 +1765,13 @@ func setupExpressLaneAuction(
 	stack, err := node.New(&stackConf)
 	Require(t, err)
 	cfg := &timeboost.BidValidatorConfig{
-		RpcEndpoint:            fmt.Sprintf("http://localhost:%d", seqPort),
-		AuctionContractAddress: proxyAddr.Hex(),
-		RedisURL:               redisURL,
-		ProducerConfig:         pubsub.TestProducerConfig,
-		MaxBidsPerSender:       5,
+		RpcEndpoint:             fmt.Sprintf("http://localhost:%d", seqPort),
+		AuctionContractAddress:  proxyAddr.Hex(),
+		RedisURL:                redisURL,
+		ProducerConfig:          pubsub.TestProducerConfig,
+		MaxBidsPerSender:        5,
+		EnableEthcallValidation: true,
+		AuctioneerAddress:       seqInfo.Accounts["AuctionContract"].Address.Hex(),
 	}
 	fetcher := func() *timeboost.BidValidatorConfig {
 		return cfg
@@ -1836,7 +1855,7 @@ func setupExpressLaneAuction(
 	t.Logf("Alice and Bob are now deposited into the autonomous auction contract, waiting %v for bidding round..., timestamp %v", waitTime, time.Now())
 	time.Sleep(roundTimingInfo.TimeTilNextRound())
 	t.Logf("Reached the bidding round at %v", time.Now())
-	return proxyAddr, alice, bob, roundDuration, builderSeq, cleanupSeq, extraNode, cleanupExtraNode
+	return proxyAddr, alice, bob, roundDuration, builderSeq, cleanupSeq, extraNode, cleanupExtraNode, bidValidator
 }
 
 func awaitAuctionResolved(

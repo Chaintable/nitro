@@ -2,7 +2,6 @@
 // For license information, see https://github.com/OffchainLabs/nitro/blob/master/LICENSE.md
 
 //go:build legacychallengetest
-// +build legacychallengetest
 
 package arbtest
 
@@ -14,13 +13,11 @@ import (
 )
 
 func TestChallengeManagerFullAsserterIncorrect(t *testing.T) {
-	t.Parallel()
 	defaultWasmRootDir := ""
 	RunChallengeTest(t, false, false, makeBatch_MsgsPerBatch+1, defaultWasmRootDir)
 }
 
 func TestChallengeManagerFullAsserterIncorrectWithPublishedMachine(t *testing.T) {
-	t.Parallel()
 	cr, err := github.LatestConsensusRelease(context.Background())
 	Require(t, err)
 	machPath := populateMachineDir(t, cr)
@@ -28,13 +25,11 @@ func TestChallengeManagerFullAsserterIncorrectWithPublishedMachine(t *testing.T)
 }
 
 func TestChallengeManagerFullAsserterCorrect(t *testing.T) {
-	t.Parallel()
 	defaultWasmRootDir := ""
 	RunChallengeTest(t, true, false, makeBatch_MsgsPerBatch+2, defaultWasmRootDir)
 }
 
 func TestChallengeManagerFullAsserterCorrectWithPublishedMachine(t *testing.T) {
-	t.Parallel()
 	cr, err := github.LatestConsensusRelease(context.Background())
 	Require(t, err)
 	machPath := populateMachineDir(t, cr)
