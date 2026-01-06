@@ -1,6 +1,6 @@
 [submodule "go-ethereum"]
 	path = go-ethereum
-	url = https://github.com/ConstellationCrypto/go-ethereum-native-yield-apechain.git
+	url = https://github.com/chaintable/go-ethereum-arb.git
 [submodule "fastcache"]
 	path = fastcache
 	url = https://github.com/OffchainLabs/fastcache.git
@@ -12,7 +12,7 @@
 	url = https://github.com/google/brotli.git
 [submodule "contracts"]
 	path = contracts
-	url = https://github.com/ConstellationCrypto/nitro-contracts-native-yield-apechain.git
+	url = https://github.com/Chaintable/nitro-contracts-native-yield-apechain.git
 [submodule "arbitrator/wasm-testsuite/testsuite"]
 	path = arbitrator/wasm-testsuite/testsuite
 	url = https://github.com/WebAssembly/testsuite.git
