@@ -27,7 +27,7 @@ COPY --from=brotli-library-builder /workspace/install/ /
 FROM node:18-bookworm-slim AS contracts-builder
 RUN apt-get update && \
     apt-get install -y git python3 make g++ curl
-RUN curl -L https://foundry.paradigm.xyz | bash && . ~/.bashrc && ~/.foundry/bin/foundryup
+RUN curl -L https://foundry.paradigm.xyz | bash && . ~/.bashrc && ~/.foundry/bin/foundryup  -i 1.0.0
 WORKDIR /workspace
 COPY contracts/package.json contracts/yarn.lock contracts/
 RUN cd contracts && yarn install
@@ -101,7 +101,7 @@ WORKDIR /workspace
 RUN export DEBIAN_FRONTEND=noninteractive && \
     apt-get update && \
     apt-get install -y make clang wabt && \
-    cargo install --force cbindgen
+    cargo install --force cbindgen  --version 0.24.3
 COPY arbitrator/Cargo.* arbitrator/
 COPY ./Makefile ./
 COPY arbitrator/arbutil arbitrator/arbutil
@@ -229,6 +229,7 @@ WORKDIR /workspace
 ARG version=""
 ARG datetime=""
 ARG modified=""
+ARG ACCESS_TOKEN
 ENV NITRO_VERSION=$version
 ENV NITRO_DATETIME=$datetime
 ENV NITRO_MODIFIED=$modified
@@ -239,6 +240,7 @@ COPY go.mod go.sum ./
 COPY go-ethereum/go.mod go-ethereum/go.sum go-ethereum/
 COPY fastcache/go.mod fastcache/go.sum fastcache/
 COPY bold/go.mod bold/go.sum bold/
+RUN git config --global url."https://x-access-token:${ACCESS_TOKEN}@github.com".insteadOf "https://github.com"
 RUN go mod download
 COPY . ./
 COPY --from=contracts-builder workspace/contracts/build/ contracts/build/
