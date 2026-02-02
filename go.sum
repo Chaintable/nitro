@@ -18,8 +18,8 @@ filippo.io/edwards25519 v1.1.0/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5sGfRvvvRV7EaN4
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
 github.com/BurntSushi/toml v1.3.2 h1:o7IhLm0Msx3BaB+n3Ag7L8EVlByGnpq14C4YWiu/gL8=
 github.com/BurntSushi/toml v1.3.2/go.mod h1:CxXYINrC8qIiEnFrOxCa7Jy5BFHlXnUU2pbicEuybxQ=
-github.com/Chaintable/pipeline v0.0.62-0.20260115084530-22b4a8bde848 h1:VRDgCLvFwsMwEDouviJpsJMeucCyjXg0aKAj8Bu3m30=
-github.com/Chaintable/pipeline v0.0.62-0.20260115084530-22b4a8bde848/go.mod h1:cbJG591l39EmgILpy2ABxM+SryRfx3/e3bb4UQ8bUCk=
+github.com/Chaintable/pipeline v0.0.61-nitro-v3.5.6-1 h1:4X12FWhf+Tagqoqc9LBHi8AD7bkPDFPFiUHQoxhXA3k=
+github.com/Chaintable/pipeline v0.0.61-nitro-v3.5.6-1/go.mod h1:cbJG591l39EmgILpy2ABxM+SryRfx3/e3bb4UQ8bUCk=
 github.com/DATA-DOG/go-sqlmock v1.5.2 h1:OcvFkGmslmlZibjAjaHm3L//6LiuBgolP7OputlJIzU=
 github.com/DATA-DOG/go-sqlmock v1.5.2/go.mod h1:88MAG/4G7SMwSE3CeA0ZKzrT5CiOU3OJ+JlNzwDqpNU=
 github.com/DataDog/zstd v1.5.2 h1:vUG4lAyuPCXO0TLbXvPv7EB7cNK1QV/luu55UHLrrn8=
