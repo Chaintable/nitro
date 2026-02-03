@@ -160,8 +160,10 @@ func (p *TxProcessor) StartTxHook() (endTxNow bool, gasUsed uint64, err error, r
 
 		return func() {
 			evm.DecrementDepth() // fake the return to the first faked call
+			// burnedGas := p.state.Burner.Burned()
 			if tracer.OnExit != nil {
-				tracer.OnExit(evm.Depth(), nil, p.state.Burner.Burned(), nil, false)
+				// tracer.OnExit(evm.Depth(), nil, burnedGas, nil, false)
+				tracer.OnExit(evm.Depth(), nil, 0, nil, false)
 			}
 
 			tracingInfo = util.NewTracingInfo(evm, from, *p.msg.To, util.TracingAfterEVM)
