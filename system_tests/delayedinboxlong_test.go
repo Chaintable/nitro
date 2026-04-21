@@ -3,7 +3,6 @@
 
 // race detection makes things slow and miss timeouts
 //go:build !race
-// +build !race
 
 package arbtest
 
@@ -18,14 +17,13 @@ import (
 )
 
 func TestDelayInboxLong(t *testing.T) {
-	t.Parallel()
 	addLocalLoops := 3
 	messagesPerAddLocal := 1000
 	messagesPerDelayed := 10
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	builder := NewNodeBuilder(ctx).DefaultConfig(t, true)
+	builder := NewNodeBuilder(ctx).DefaultConfig(t, true).DontParalellise()
 	cleanup := builder.Build(t)
 	defer cleanup()
 

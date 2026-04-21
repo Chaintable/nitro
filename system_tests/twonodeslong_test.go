@@ -3,7 +3,6 @@
 
 // race detection makes things slow and miss timeouts
 //go:build !race
-// +build !race
 
 package arbtest
 
@@ -21,7 +20,6 @@ import (
 )
 
 func testTwoNodesLong(t *testing.T, dasModeStr string) {
-	t.Parallel()
 	largeLoops := 8
 	avgL2MsgsPerLoop := 30
 	avgDelayedMessagesPerLoop := 10
@@ -78,7 +76,7 @@ func testTwoNodesLong(t *testing.T, dasModeStr string) {
 	if delayedFaucetBalance.Cmp(delayedFaucetNeeds) != 0 {
 		t.Fatalf("Unexpected balance, has %v, expects %v", delayedFaucetBalance, delayedFaucetNeeds)
 	}
-	t.Logf("DelayedFaucet has %v, per delayd: %v, baseprice: %v", delayedFaucetBalance, fundsPerDelayed, l2pricing.InitialBaseFeeWei)
+	t.Logf("DelayedFaucet has %v, per delayed: %v, baseprice: %v", delayedFaucetBalance, fundsPerDelayed, l2pricing.InitialBaseFeeWei)
 
 	if avgTotalL1MessagesPerLoop < avgDelayedMessagesPerLoop {
 		Fatal(t, "bad params, avgTotalL1MessagesPerLoop should include avgDelayedMessagesPerLoop")

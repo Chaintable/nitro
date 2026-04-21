@@ -95,8 +95,8 @@ func init() {
 			}()
 			core.ReadyEVMForL2(evm, msg)
 
-			output, gasLeft, err := precompile.Call(
-				msg.Data, address, address, msg.From, msg.Value, false, msg.GasLimit, evm,
+			output, _, gasUsed, err := precompile.Call(
+				msg.Data, address, msg.From, msg.Value, false, msg.GasLimit, evm,
 			)
 			if err != nil {
 				return msg, nil, err
@@ -105,7 +105,8 @@ func init() {
 				return returnMessage, nil, nil
 			}
 			res := &ExecutionResult{
-				UsedGas:       msg.GasLimit - gasLeft,
+				UsedGas:       gasUsed.SingleGas(),
+				MaxUsedGas:    gasUsed.SingleGas(),
 				Err:           nil,
 				ReturnData:    output,
 				ScheduledTxes: nil,
@@ -136,7 +137,7 @@ func init() {
 		}
 		posterCost, _ := state.L1PricingState().PosterDataCost(msg, l1pricing.BatchPosterAddress, brotliCompressionLevel)
 		// Use estimate mode because this is used to raise the gas cap, so we don't want to underestimate.
-		return arbos.GetPosterGas(state, header.BaseFee, core.MessageGasEstimationMode, posterCost), nil
+		return arbos.GetPosterGas(state, header.BaseFee, core.NewMessageGasEstimationContext(), posterCost), nil
 	}
 
 	core.GetArbOSSpeedLimitPerSecond = func(statedb *state.StateDB) (uint64, error) {

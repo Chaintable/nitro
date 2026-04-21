@@ -13,7 +13,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
@@ -21,10 +20,8 @@ func TestDebugTraceCallForRecentBlock(t *testing.T) {
 	threads := 32
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	builder := NewNodeBuilder(ctx).DefaultConfig(t, true)
+	builder := NewNodeBuilder(ctx).DefaultConfig(t, true).WithTakeOwnership(false)
 	builder.execConfig.Caching.Archive = true
-	// For now Archive node should use HashScheme
-	builder.execConfig.Caching.StateScheme = rawdb.HashScheme
 	cleanup := builder.Build(t)
 	defer cleanup()
 	builder.L2Info.GenerateAccount("User2")

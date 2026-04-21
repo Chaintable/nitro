@@ -6,6 +6,7 @@
     "sequencer-url": "https://arb1-sequencer.arbitrum.io/rpc",
     "secondary-forwarding-target": "https://arb1-sequencer-fallback-1.arbitrum.io/rpc,https://arb1-sequencer-fallback-2.arbitrum.io/rpc,https://arb1-sequencer-fallback-3.arbitrum.io/rpc,https://arb1-sequencer-fallback-4.arbitrum.io/rpc,https://arb1-sequencer-fallback-5.arbitrum.io/rpc",
     "feed-url": "wss://arb1-feed.arbitrum.io/feed",
+    "feed-signed": false,
     "secondary-feed-url": "wss://arb1-delayed-feed.arbitrum.io/feed,wss://arb1-feed-fallback-1.arbitrum.io/feed,wss://arb1-feed-fallback-2.arbitrum.io/feed,wss://arb1-feed-fallback-3.arbitrum.io/feed,wss://arb1-feed-fallback-4.arbitrum.io/feed,wss://arb1-feed-fallback-5.arbitrum.io/feed",
     "has-genesis-state": true,
     "block-metadata-url": "https://arb1.arbitrum.io/rpc",
@@ -37,18 +38,6 @@
         "InitialArbOSVersion": 6,
         "InitialChainOwner": "0xd345e41ae2cb00311956aa7109fc801ae8c81a52",
         "GenesisBlockNum": 0
-      },
-      "blobSchedule": {
-       "cancun": {
-        "target": 3,
-         "max": 6,
-         "baseFeeUpdateFraction": 3338477
-       },
-        "prague": {
-          "target": 6,
-          "max": 9,
-          "baseFeeUpdateFraction": 5007716
-        }
       }
     },
     "rollup": {
@@ -68,6 +57,7 @@
     "parent-chain-is-arbitrum": false,
     "sequencer-url": "https://nova.arbitrum.io/rpc",
     "feed-url": "wss://nova-feed.arbitrum.io/feed",
+    "feed-signed": false,
     "das-index-url": "https://nova.arbitrum.io/das-servers",
     "block-metadata-url": "https://nova.arbitrum.io/rpc",
     "track-block-metadata-from": 83340000,
@@ -98,18 +88,6 @@
         "InitialArbOSVersion": 1,
         "InitialChainOwner": "0x9c040726f2a657226ed95712245dee84b650a1b5",
         "GenesisBlockNum": 0
-      },
-      "blobSchedule": {
-        "cancun": {
-          "target": 3,
-          "max": 6,
-          "baseFeeUpdateFraction": 3338477
-        },
-        "prague": {
-          "target": 6,
-          "max": 9,
-          "baseFeeUpdateFraction": 5007716
-        }
       }
     },
     "rollup": {
@@ -129,6 +107,7 @@
     "parent-chain-is-arbitrum": false,
     "sequencer-url": "https://goerli-rollup.arbitrum.io/rpc",
     "feed-url": "wss://goerli-rollup.arbitrum.io/feed",
+    "feed-signed": false,
     "chain-config": {
       "chainId": 421613,
       "homesteadBlock": 0,
@@ -156,18 +135,6 @@
         "InitialArbOSVersion": 2,
         "InitialChainOwner": "0x186b56023d42b2b4e7616589a5c62eef5fca21dd",
         "GenesisBlockNum": 0
-      },
-      "blobSchedule": {
-        "cancun": {
-          "target": 3,
-          "max": 6,
-          "baseFeeUpdateFraction": 3338477
-        },
-        "prague": {
-          "target": 6,
-          "max": 9,
-          "baseFeeUpdateFraction": 5007716
-        }
       }
     },
     "rollup": {
@@ -206,21 +173,9 @@
         "EnableArbOS": true,
         "AllowDebugPrecompiles": true,
         "DataAvailabilityCommittee": false,
-        "InitialArbOSVersion": 40,
+        "InitialArbOSVersion": 51,
         "InitialChainOwner": "0x0000000000000000000000000000000000000000",
         "GenesisBlockNum": 0
-      },
-      "blobSchedule": {
-        "cancun": {
-          "target": 3,
-          "max": 6,
-          "baseFeeUpdateFraction": 3338477
-        },
-        "prague": {
-          "target": 6,
-          "max": 9,
-          "baseFeeUpdateFraction": 5007716
-        }
       }
     }
   },
@@ -253,18 +208,6 @@
         "InitialArbOSVersion": 32,
         "InitialChainOwner": "0x0000000000000000000000000000000000000000",
         "GenesisBlockNum": 0
-      },
-      "blobSchedule": {
-        "cancun": {
-          "target": 3,
-          "max": 6,
-          "baseFeeUpdateFraction": 3338477
-        },
-        "prague": {
-          "target": 6,
-          "max": 9,
-          "baseFeeUpdateFraction": 5007716
-        }
       }
     }
   },
@@ -275,6 +218,7 @@
     "chain-name": "sepolia-rollup",
     "sequencer-url": "https://sepolia-rollup-sequencer.arbitrum.io/rpc",
     "feed-url": "wss://sepolia-rollup.arbitrum.io/feed",
+    "feed-signed": false,
     "block-metadata-url": "https://sepolia-rollup.arbitrum.io/rpc",
     "track-block-metadata-from": 123000000,
     "chain-config": {
@@ -304,25 +248,13 @@
         "InitialArbOSVersion": 10,
         "InitialChainOwner": "0x71B61c2E250AFa05dFc36304D6c91501bE0965D8",
         "GenesisBlockNum": 0
-      },
-      "blobSchedule": {
-        "cancun": {
-          "target": 3,
-          "max": 6,
-          "baseFeeUpdateFraction": 3338477
-        },
-        "prague": {
-          "target": 6,
-          "max": 9,
-          "baseFeeUpdateFraction": 5007716
-        }
       }
     },
     "rollup": {
       "bridge": "0x38f918D0E9F1b721EDaA41302E399fa1B79333a9",
       "inbox": "0xaAe29B0366299461418F5324a79Afc425BE5ae21",
       "sequencer-inbox": "0x6c97864CE4bEf387dE0b3310A44230f7E3F1be0D",
-      "rollup": "0xd80810638dbDF9081b72C1B33c65375e807281C8",
+      "rollup": "0x042B2E6C5E99d4c521bd49beeD5E99651D9B0Cf4",
       "validator-utils": "0x1f6860C3cac255fFFa72B7410b1183c3a0D261e0",
       "validator-wallet-creator": "0x894fC71fA0A666352824EC954B401573C861D664",
       "stake-token": "0xefb383126640fe4a760010c6e59c397d2b6c7141",
@@ -335,6 +267,7 @@
     "chain-name": "stylus-testnet",
     "sequencer-url": "https://stylus-testnet-sequencer.arbitrum.io/rpc",
     "feed-url": "wss://stylus-testnet.arbitrum.io/feed",
+    "feed-signed": false,
     "chain-config":
     {
       "chainId": 23011913,
@@ -365,18 +298,6 @@
         "InitialArbOSVersion": 10,
         "InitialChainOwner": "0x35c8d15334Eaf0e4b82417Fe10e28deEa0c5C32B",
         "GenesisBlockNum": 0
-      },
-      "blobSchedule": {
-        "cancun": {
-          "target": 3,
-          "max": 6,
-          "baseFeeUpdateFraction": 3338477
-        },
-        "prague": {
-          "target": 6,
-          "max": 9,
-          "baseFeeUpdateFraction": 5007716
-        }
       }
     },
     "rollup":

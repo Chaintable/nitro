@@ -2,7 +2,6 @@
 // For license information, see https://github.com/OffchainLabs/nitro/blob/master/LICENSE.md
 
 //go:build !wasm
-// +build !wasm
 
 package gethexec
 
@@ -16,19 +15,21 @@ import "C"
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
 	"path"
 	"runtime/pprof"
 	"runtime/trace"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/ethereum/go-ethereum/arbitrum/multigas"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -37,6 +38,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
+	"github.com/ethereum/go-ethereum/params"
 
 	"github.com/offchainlabs/nitro/arbos"
 	"github.com/offchainlabs/nitro/arbos/arbosState"
@@ -44,22 +46,24 @@ import (
 	"github.com/offchainlabs/nitro/arbos/l1pricing"
 	"github.com/offchainlabs/nitro/arbos/programs"
 	"github.com/offchainlabs/nitro/arbutil"
-	"github.com/offchainlabs/nitro/cmd/chaininfo"
 	"github.com/offchainlabs/nitro/execution"
 	"github.com/offchainlabs/nitro/util/arbmath"
+	"github.com/offchainlabs/nitro/util/containers"
 	"github.com/offchainlabs/nitro/util/sharedmetrics"
 	"github.com/offchainlabs/nitro/util/stopwaiter"
 )
 
 var (
-	l1GasPriceEstimateGauge    = metrics.NewRegisteredGauge("arb/l1gasprice/estimate", nil)
-	baseFeeGauge               = metrics.NewRegisteredGauge("arb/block/basefee", nil)
-	blockGasUsedHistogram      = metrics.NewRegisteredHistogram("arb/block/gasused", nil, metrics.NewBoundedHistogramSample())
-	txCountHistogram           = metrics.NewRegisteredHistogram("arb/block/transactions/count", nil, metrics.NewBoundedHistogramSample())
-	txGasUsedHistogram         = metrics.NewRegisteredHistogram("arb/block/transactions/gasused", nil, metrics.NewBoundedHistogramSample())
-	gasUsedSinceStartupCounter = metrics.NewRegisteredCounter("arb/gas_used", nil)
-	blockExecutionTimer        = metrics.NewRegisteredTimer("arb/block/execution", nil)
-	blockWriteToDbTimer        = metrics.NewRegisteredTimer("arb/block/writetodb", nil)
+	l1GasPriceEstimateGauge              = metrics.NewRegisteredGauge("arb/l1gasprice/estimate", nil)
+	baseFeeGauge                         = metrics.NewRegisteredGauge("arb/block/basefee", nil)
+	blockGasUsedHistogram                = metrics.NewRegisteredHistogram("arb/block/gasused", nil, metrics.NewBoundedHistogramSample())
+	txCountHistogram                     = metrics.NewRegisteredHistogram("arb/block/transactions/count", nil, metrics.NewBoundedHistogramSample())
+	txGasUsedHistogram                   = metrics.NewRegisteredHistogram("arb/block/transactions/gasused", nil, metrics.NewBoundedHistogramSample())
+	gasUsedSinceStartupCounter           = metrics.NewRegisteredCounter("arb/gas_used", nil)
+	multiGasUsedSinceStartupCounters     = make([]*metrics.Counter, multigas.NumResourceKind)
+	totalMultiGasUsedSinceStartupCounter = metrics.NewRegisteredCounter("arb/multigas_used/total", nil)
+	blockExecutionTimer                  = metrics.NewRegisteredHistogram("arb/block/execution", nil, metrics.NewBoundedHistogramSample())
+	blockWriteToDbTimer                  = metrics.NewRegisteredHistogram("arb/block/writetodb", nil, metrics.NewBoundedHistogramSample())
 )
 
 var ExecutionEngineBlockCreationStopped = errors.New("block creation stopped in execution engine")
@@ -68,8 +72,6 @@ var ResultNotFound = errors.New("result not found")
 type L1PriceDataOfMsg struct {
 	callDataUnits            uint64
 	cummulativeCallDataUnits uint64
-	l1GasCharged             uint64
-	cummulativeL1GasCharged  uint64
 }
 
 type L1PriceData struct {
@@ -103,7 +105,14 @@ type ExecutionEngine struct {
 	prefetchBlock bool
 
 	cachedL1PriceData *L1PriceData
-	syncTillBlock     uint64
+
+	wasmTargets []rawdb.WasmTarget
+
+	syncTillBlock uint64
+
+	exposeMultiGas bool
+
+	runningMaintenance atomic.Bool
 }
 
 func NewL1PriceData() *L1PriceData {
@@ -112,12 +121,20 @@ func NewL1PriceData() *L1PriceData {
 	}
 }
 
-func NewExecutionEngine(bc *core.BlockChain, syncTillBlock uint64) (*ExecutionEngine, error) {
+func init() {
+	for dimension := multigas.ResourceKind(0); dimension < multigas.NumResourceKind; dimension++ {
+		metricName := fmt.Sprintf("arb/multigas_used/%v", strings.ToLower(dimension.String()))
+		multiGasUsedSinceStartupCounters[dimension] = metrics.NewRegisteredCounter(metricName, nil)
+	}
+}
+
+func NewExecutionEngine(bc *core.BlockChain, syncTillBlock uint64, exposeMultiGas bool) (*ExecutionEngine, error) {
 	return &ExecutionEngine{
 		bc:                bc,
 		resequenceChan:    make(chan []*arbostypes.MessageWithMetadata),
 		newBlockNotifier:  make(chan struct{}, 1),
 		cachedL1PriceData: NewL1PriceData(),
+		exposeMultiGas:    exposeMultiGas,
 		syncTillBlock:     syncTillBlock,
 	}, nil
 }
@@ -135,25 +152,12 @@ func (s *ExecutionEngine) backlogCallDataUnits() uint64 {
 		s.cachedL1PriceData.msgToL1PriceData[0].callDataUnits)
 }
 
-func (s *ExecutionEngine) backlogL1GasCharged() uint64 {
-	s.cachedL1PriceData.mutex.RLock()
-	defer s.cachedL1PriceData.mutex.RUnlock()
-
-	size := len(s.cachedL1PriceData.msgToL1PriceData)
-	if size == 0 {
-		return 0
-	}
-	return (s.cachedL1PriceData.msgToL1PriceData[size-1].cummulativeL1GasCharged -
-		s.cachedL1PriceData.msgToL1PriceData[0].cummulativeL1GasCharged +
-		s.cachedL1PriceData.msgToL1PriceData[0].l1GasCharged)
-}
-
 func (s *ExecutionEngine) MarkFeedStart(to arbutil.MessageIndex) {
 	s.cachedL1PriceData.mutex.Lock()
 	defer s.cachedL1PriceData.mutex.Unlock()
 
 	if to < s.cachedL1PriceData.startOfL1PriceDataCache {
-		log.Debug("trying to trim older L1 price data cache which doesnt exist anymore")
+		log.Debug("trying to trim older L1 price data cache which doesn't exist anymore")
 	} else if to >= s.cachedL1PriceData.endOfL1PriceDataCache {
 		s.cachedL1PriceData.startOfL1PriceDataCache = 0
 		s.cachedL1PriceData.endOfL1PriceDataCache = 0
@@ -204,6 +208,7 @@ func (s *ExecutionEngine) Initialize(rustCacheCapacityMB uint32, targetConfig *S
 	if err := PopulateStylusTargetCache(targetConfig); err != nil {
 		return fmt.Errorf("error populating stylus target cache: %w", err)
 	}
+	s.wasmTargets = targetConfig.WasmTargets()
 	return nil
 }
 
@@ -311,7 +316,7 @@ func (s *ExecutionEngine) Reorg(msgIdxOfFirstMsgToAdd arbutil.MessageIndex, newM
 		s.bc.SetFinalized(nil)
 	}
 
-	tag := s.bc.StateCache().WasmCacheTag()
+	tag := core.NewMessageCommitContext(nil).WasmCacheTag() // we don't pass any targets, we just want the tag
 	// reorg Rust-side VM state
 	C.stylus_reorg_vm(C.uint64_t(lastBlockNumToKeep), C.uint32_t(tag))
 
@@ -380,41 +385,6 @@ func (s *ExecutionEngine) NextDelayedMessageNumber() (uint64, error) {
 	return currentHeader.Nonce.Uint64(), nil
 }
 
-func MessageFromTxes(header *arbostypes.L1IncomingMessageHeader, txes types.Transactions, txErrors []error) (*arbostypes.L1IncomingMessage, error) {
-	var l2Message []byte
-	if len(txes) == 1 && txErrors[0] == nil {
-		txBytes, err := txes[0].MarshalBinary()
-		if err != nil {
-			return nil, err
-		}
-		l2Message = append(l2Message, arbos.L2MessageKind_SignedTx)
-		l2Message = append(l2Message, txBytes...)
-	} else {
-		l2Message = append(l2Message, arbos.L2MessageKind_Batch)
-		sizeBuf := make([]byte, 8)
-		for i, tx := range txes {
-			if txErrors[i] != nil {
-				continue
-			}
-			txBytes, err := tx.MarshalBinary()
-			if err != nil {
-				return nil, err
-			}
-			binary.BigEndian.PutUint64(sizeBuf, uint64(len(txBytes)+1))
-			l2Message = append(l2Message, sizeBuf...)
-			l2Message = append(l2Message, arbos.L2MessageKind_SignedTx)
-			l2Message = append(l2Message, txBytes...)
-		}
-	}
-	if len(l2Message) > arbostypes.MaxL2MessageSize {
-		return nil, errors.New("l2message too long")
-	}
-	return &arbostypes.L1IncomingMessage{
-		Header: header,
-		L2msg:  l2Message,
-	}, nil
-}
-
 // The caller must hold the createBlocksMutex
 func (s *ExecutionEngine) resequenceReorgedMessages(messages []*arbostypes.MessageWithMetadata) {
 	if !s.reorgSequencing {
@@ -454,17 +424,20 @@ func (s *ExecutionEngine) resequenceReorgedMessages(messages []*arbostypes.Messa
 			log.Warn("skipping non-standard sequencer message found from reorg", "header", header)
 			continue
 		}
-		txes, err := arbos.ParseL2Transactions(msg.Message, s.bc.Config().ChainID)
+		lastArbosVersion := types.DeserializeHeaderExtraInformation(lastBlockHeader).ArbOSFormatVersion
+		txes, err := arbos.ParseL2Transactions(msg.Message, s.bc.Config().ChainID, lastArbosVersion)
 		if err != nil {
 			log.Warn("failed to parse sequencer message found from reorg", "err", err)
 			continue
 		}
-		hooks := arbos.NoopSequencingHooks()
-		hooks.DiscardInvalidTxsEarly = true
-		_, err = s.sequenceTransactionsWithBlockMutex(msg.Message.Header, txes, hooks, nil)
+		hooks := MakeZeroTxSizeSequencingHooksForTesting(txes, nil, nil, nil)
+		block, err := s.sequenceTransactionsWithBlockMutex(msg.Message.Header, hooks, nil)
 		if err != nil {
 			log.Error("failed to re-sequence old user message removed by reorg", "err", err)
 			return
+		}
+		if block != nil {
+			lastBlockHeader = block.Header()
 		}
 	}
 }
@@ -498,17 +471,16 @@ func (s *ExecutionEngine) sequencerWrapper(sequencerFunc func() (*types.Block, e
 	}
 }
 
-func (s *ExecutionEngine) SequenceTransactions(header *arbostypes.L1IncomingMessageHeader, txes types.Transactions, hooks *arbos.SequencingHooks, timeboostedTxs map[common.Hash]struct{}) (*types.Block, error) {
+func (s *ExecutionEngine) SequenceTransactions(header *arbostypes.L1IncomingMessageHeader, hooks *FullSequencingHooks, timeboostedTxs map[common.Hash]struct{}) (*types.Block, error) {
 	return s.sequencerWrapper(func() (*types.Block, error) {
-		hooks.TxErrors = nil
-		return s.sequenceTransactionsWithBlockMutex(header, txes, hooks, timeboostedTxs)
+		return s.sequenceTransactionsWithBlockMutex(header, hooks, timeboostedTxs)
 	})
 }
 
 // SequenceTransactionsWithProfiling runs SequenceTransactions with tracing and
 // CPU profiling enabled. If the block creation takes longer than 2 seconds, it
 // keeps both and prints out filenames in an error log line.
-func (s *ExecutionEngine) SequenceTransactionsWithProfiling(header *arbostypes.L1IncomingMessageHeader, txes types.Transactions, hooks *arbos.SequencingHooks, timeboostedTxs map[common.Hash]struct{}) (*types.Block, error) {
+func (s *ExecutionEngine) SequenceTransactionsWithProfiling(header *arbostypes.L1IncomingMessageHeader, hooks *FullSequencingHooks, timeboostedTxs map[common.Hash]struct{}) (*types.Block, error) {
 	pprofBuf, traceBuf := bytes.NewBuffer(nil), bytes.NewBuffer(nil)
 	if err := pprof.StartCPUProfile(pprofBuf); err != nil {
 		log.Error("Starting CPU profiling", "error", err)
@@ -517,7 +489,7 @@ func (s *ExecutionEngine) SequenceTransactionsWithProfiling(header *arbostypes.L
 		log.Error("Starting tracing", "error", err)
 	}
 	start := time.Now()
-	res, err := s.SequenceTransactions(header, txes, hooks, timeboostedTxs)
+	res, err := s.SequenceTransactions(header, hooks, timeboostedTxs)
 	elapsed := time.Since(start)
 	pprof.StopCPUProfile()
 	trace.Stop()
@@ -543,7 +515,7 @@ func writeAndLog(pprof, trace *bytes.Buffer) {
 	log.Info("Transactions sequencing took longer than 2 seconds, created pprof and trace files", "pprof", pprofFile, "traceFile", traceFile)
 }
 
-func (s *ExecutionEngine) sequenceTransactionsWithBlockMutex(header *arbostypes.L1IncomingMessageHeader, txes types.Transactions, hooks *arbos.SequencingHooks, timeboostedTxs map[common.Hash]struct{}) (*types.Block, error) {
+func (s *ExecutionEngine) sequenceTransactionsWithBlockMutex(header *arbostypes.L1IncomingMessageHeader, hooks *FullSequencingHooks, timeboostedTxs map[common.Hash]struct{}) (*types.Block, error) {
 	lastBlockHeader, err := s.getCurrentHeader()
 	if err != nil {
 		return nil, err
@@ -558,43 +530,44 @@ func (s *ExecutionEngine) sequenceTransactionsWithBlockMutex(header *arbostypes.
 		return nil, errors.New("can't find block for current header")
 	}
 	var witness *stateless.Witness
+	var witnessStats *stateless.WitnessStats
 	if s.bc.GetVMConfig().StatelessSelfValidation {
 		witness, err = stateless.NewWitness(lastBlock.Header(), s.bc)
 		if err != nil {
 			return nil, err
 		}
+		if s.bc.GetVMConfig().EnableWitnessStats {
+			witnessStats = stateless.NewWitnessStats()
+		}
 	}
-	statedb.StartPrefetcher("Sequencer", witness)
+	statedb.StartPrefetcher("Sequencer", witness, witnessStats)
 	defer statedb.StopPrefetcher()
 	delayedMessagesRead := lastBlockHeader.Nonce.Uint64()
 
 	startTime := time.Now()
 	block, receipts, err := arbos.ProduceBlockAdvanced(
 		header,
-		txes,
 		delayedMessagesRead,
 		lastBlockHeader,
 		statedb,
 		s.bc,
 		hooks,
 		false,
-		core.MessageCommitMode,
+		core.NewMessageCommitContext(s.wasmTargets),
+		s.exposeMultiGas,
 	)
 	if err != nil {
 		return nil, err
 	}
 	blockCalcTime := time.Since(startTime)
-	blockExecutionTimer.Update(blockCalcTime)
-	if len(hooks.TxErrors) != len(txes) {
-		return nil, fmt.Errorf("unexpected number of error results: %v vs number of txes %v", len(hooks.TxErrors), len(txes))
-	}
+	blockExecutionTimer.Update(blockCalcTime.Nanoseconds())
 
 	if len(receipts) == 0 {
 		return nil, nil
 	}
 
 	allTxsErrored := true
-	for _, err := range hooks.TxErrors {
+	for _, err := range hooks.txErrors {
 		if err == nil {
 			allTxsErrored = false
 			break
@@ -604,7 +577,7 @@ func (s *ExecutionEngine) sequenceTransactionsWithBlockMutex(header *arbostypes.
 		return nil, nil
 	}
 
-	msg, err := MessageFromTxes(header, txes, hooks.TxErrors)
+	msg, err := hooks.MessageFromTxes(header)
 	if err != nil {
 		return nil, err
 	}
@@ -635,7 +608,7 @@ func (s *ExecutionEngine) sequenceTransactionsWithBlockMutex(header *arbostypes.
 	if err != nil {
 		return nil, err
 	}
-	s.cacheL1PriceDataOfMsg(msgIdx, receipts, block, false)
+	s.cacheL1PriceDataOfMsg(msgIdx, block, false)
 
 	return block, nil
 }
@@ -644,7 +617,7 @@ func (s *ExecutionEngine) sequenceTransactionsWithBlockMutex(header *arbostypes.
 // or not. The first byte of blockMetadata byte array is reserved to indicate the version,
 // starting from the second byte, (N)th bit would represent if (N)th tx is timeboosted or not, 1 means yes and 0 means no
 // blockMetadata[index / 8 + 1] & (1 << (index % 8)) != 0; where index = (N - 1), implies whether (N)th tx in a block is timeboosted
-// note that number of txs in a block will always lag behind (len(blockMetadata) - 1) * 8 but it wont lag more than a value of 7
+// note that number of txs in a block will always lag behind (len(blockMetadata) - 1) * 8 but it won't lag more than a value of 7
 func (s *ExecutionEngine) blockMetadataFromBlock(block *types.Block, timeboostedTxs map[common.Hash]struct{}) common.BlockMetadata {
 	bits := make(common.BlockMetadata, 1+arbmath.DivCeil(uint64(len(block.Transactions())), 8))
 	if len(timeboostedTxs) == 0 {
@@ -696,7 +669,7 @@ func (s *ExecutionEngine) sequenceDelayedMessageWithBlockMutex(message *arbostyp
 		return nil, err
 	}
 	blockCalcTime := time.Since(startTime)
-	blockExecutionTimer.Update(blockCalcTime)
+	blockExecutionTimer.Update(blockCalcTime.Nanoseconds())
 
 	msgResult, err := s.resultFromHeader(block.Header())
 	if err != nil {
@@ -712,7 +685,7 @@ func (s *ExecutionEngine) sequenceDelayedMessageWithBlockMutex(message *arbostyp
 	if err != nil {
 		return nil, err
 	}
-	s.cacheL1PriceDataOfMsg(msgIdx, receipts, block, true)
+	s.cacheL1PriceDataOfMsg(msgIdx, block, true)
 
 	log.Info("ExecutionEngine: Added DelayedMessages", "msgIdx", msgIdx, "delayedMsgIdx", delayedMsgIdx, "block-header", block.Header())
 
@@ -757,18 +730,24 @@ func (s *ExecutionEngine) createBlockFromNextMessage(msg *arbostypes.MessageWith
 		return nil, nil, nil, err
 	}
 	var witness *stateless.Witness
+	var witnessStats *stateless.WitnessStats
 	if s.bc.GetVMConfig().StatelessSelfValidation {
 		witness, err = stateless.NewWitness(currentBlock.Header(), s.bc)
 		if err != nil {
 			return nil, nil, nil, err
 		}
+		if s.bc.GetVMConfig().EnableWitnessStats {
+			witnessStats = stateless.NewWitnessStats()
+		}
 	}
-	statedb.StartPrefetcher("TransactionStreamer", witness)
+	statedb.StartPrefetcher("TransactionStreamer", witness, witnessStats)
 	defer statedb.StopPrefetcher()
 
-	runMode := core.MessageCommitMode
+	var runCtx *core.MessageRunContext
 	if isMsgForPrefetch {
-		runMode = core.MessageReplayMode
+		runCtx = core.NewMessagePrefetchContext()
+	} else {
+		runCtx = core.NewMessageCommitContext(s.wasmTargets)
 	}
 	block, receipts, err := arbos.ProduceBlock(
 		msg.Message,
@@ -777,7 +756,8 @@ func (s *ExecutionEngine) createBlockFromNextMessage(msg *arbostypes.MessageWith
 		statedb,
 		s.bc,
 		isMsgForPrefetch,
-		runMode,
+		runCtx,
+		s.exposeMultiGas,
 	)
 
 	return block, statedb, receipts, err
@@ -805,14 +785,25 @@ func (s *ExecutionEngine) appendBlock(block *types.Block, statedb *state.StateDB
 			return errors.New("geth rejected block as non-canonical")
 		}
 	}
-	blockWriteToDbTimer.Update(time.Since(startTime))
+	blockWriteToDbTimer.Update(time.Since(startTime).Nanoseconds())
 	baseFeeGauge.Update(block.BaseFee().Int64())
 	txCountHistogram.Update(int64(len(block.Transactions()) - 1))
 	var blockGasused uint64
 	for i := 1; i < len(receipts); i++ {
-		val := arbmath.SaturatingUSub(receipts[i].GasUsed, receipts[i].GasUsedForL1)
+		receipt := receipts[i]
+		val := arbmath.SaturatingUSub(receipt.GasUsed, receipt.GasUsedForL1)
 		txGasUsedHistogram.Update(int64(val))
 		blockGasused += val
+
+		if s.exposeMultiGas {
+			for kind := range multiGasUsedSinceStartupCounters {
+				amount := receipt.MultiGasUsed.Get(multigas.ResourceKind(kind))
+				if amount > 0 {
+					multiGasUsedSinceStartupCounters[kind].Inc(int64(amount))
+				}
+			}
+			totalMultiGasUsedSinceStartupCounter.Inc(int64(receipt.MultiGasUsed.SingleGas()))
+		}
 	}
 	blockGasUsedHistogram.Update(int64(blockGasused))
 	gasUsedSinceStartupCounter.Inc(int64(blockGasused))
@@ -874,24 +865,17 @@ func (s *ExecutionEngine) getL1PricingSurplus() (int64, error) {
 	return surplus.Int64(), nil
 }
 
-func (s *ExecutionEngine) cacheL1PriceDataOfMsg(msgIdx arbutil.MessageIndex, receipts types.Receipts, block *types.Block, blockBuiltUsingDelayedMessage bool) {
-	var gasUsedForL1 uint64
+func (s *ExecutionEngine) cacheL1PriceDataOfMsg(msgIdx arbutil.MessageIndex, block *types.Block, blockBuiltUsingDelayedMessage bool) {
 	var callDataUnits uint64
 	if !blockBuiltUsingDelayedMessage {
 		// s.cachedL1PriceData tracks L1 price data for messages posted by Nitro,
 		// so delayed messages should not update cummulative values kept on it.
 
-		// First transaction in every block is an Arbitrum internal transaction,
-		// so we skip it here.
-		for i := 1; i < len(receipts); i++ {
-			gasUsedForL1 += receipts[i].GasUsedForL1
-		}
 		for _, tx := range block.Transactions() {
 			_, cachedUnits := tx.GetRawCachedCalldataUnits()
 			callDataUnits += cachedUnits
 		}
 	}
-	l1GasCharged := gasUsedForL1 * block.BaseFee().Uint64()
 
 	s.cachedL1PriceData.mutex.Lock()
 	defer s.cachedL1PriceData.mutex.Unlock()
@@ -902,8 +886,6 @@ func (s *ExecutionEngine) cacheL1PriceDataOfMsg(msgIdx arbutil.MessageIndex, rec
 		s.cachedL1PriceData.msgToL1PriceData = []L1PriceDataOfMsg{{
 			callDataUnits:            callDataUnits,
 			cummulativeCallDataUnits: callDataUnits,
-			l1GasCharged:             l1GasCharged,
-			cummulativeL1GasCharged:  l1GasCharged,
 		}}
 	}
 	size := len(s.cachedL1PriceData.msgToL1PriceData)
@@ -925,12 +907,9 @@ func (s *ExecutionEngine) cacheL1PriceDataOfMsg(msgIdx arbutil.MessageIndex, rec
 		}
 	} else {
 		cummulativeCallDataUnits := s.cachedL1PriceData.msgToL1PriceData[size-1].cummulativeCallDataUnits
-		cummulativeL1GasCharged := s.cachedL1PriceData.msgToL1PriceData[size-1].cummulativeL1GasCharged
 		s.cachedL1PriceData.msgToL1PriceData = append(s.cachedL1PriceData.msgToL1PriceData, L1PriceDataOfMsg{
 			callDataUnits:            callDataUnits,
 			cummulativeCallDataUnits: cummulativeCallDataUnits + callDataUnits,
-			l1GasCharged:             l1GasCharged,
-			cummulativeL1GasCharged:  cummulativeL1GasCharged + l1GasCharged,
 		})
 		s.cachedL1PriceData.endOfL1PriceDataCache = msgIdx
 	}
@@ -977,13 +956,13 @@ func (s *ExecutionEngine) digestMessageWithBlockMutex(msgIdxToDigest arbutil.Mes
 		return nil, err
 	}
 	blockCalcTime := time.Since(startTime)
-	blockExecutionTimer.Update(blockCalcTime)
+	blockExecutionTimer.Update(blockCalcTime.Nanoseconds())
 
 	err = s.appendBlock(block, statedb, receipts, blockCalcTime)
 	if err != nil {
 		return nil, err
 	}
-	s.cacheL1PriceDataOfMsg(msgIdxToDigest, receipts, block, false)
+	s.cacheL1PriceDataOfMsg(msgIdxToDigest, block, false)
 
 	if time.Now().After(s.nextScheduledVersionCheck) {
 		s.nextScheduledVersionCheck = time.Now().Add(time.Minute)
@@ -1005,17 +984,16 @@ func (s *ExecutionEngine) digestMessageWithBlockMutex(msgIdxToDigest arbutil.Mes
 			timestamp = time.Unix(int64(timestampInt), 0)
 			timeUntilUpgrade = time.Until(timestamp)
 		}
-		maxSupportedVersion := chaininfo.ArbitrumDevTestChainConfig().ArbitrumChainParams.InitialArbOSVersion
 		logLevel := log.Warn
 		if timeUntilUpgrade < time.Hour*24 {
 			logLevel = log.Error
 		}
-		if version > maxSupportedVersion {
+		if version > params.MaxArbosVersionSupported {
 			logLevel(
 				"you need to update your node to the latest version before this scheduled ArbOS upgrade",
 				"timeUntilUpgrade", timeUntilUpgrade,
 				"upgradeScheduledFor", timestamp,
-				"maxSupportedArbosVersion", maxSupportedVersion,
+				"maxSupportedArbosVersion", params.MaxArbosVersionSupported,
 				"pendingArbosUpgradeVersion", version,
 			)
 		}
@@ -1037,17 +1015,18 @@ func (s *ExecutionEngine) digestMessageWithBlockMutex(msgIdxToDigest arbutil.Mes
 	return msgResult, nil
 }
 
-func (s *ExecutionEngine) ArbOSVersionForMessageIndex(msgIdx arbutil.MessageIndex) (uint64, error) {
+func (s *ExecutionEngine) ArbOSVersionForMessageIndex(msgIdx arbutil.MessageIndex) containers.PromiseInterface[uint64] {
 	block := s.bc.GetBlockByNumber(s.MessageIndexToBlockNumber(msgIdx))
 	if block == nil {
-		return 0, fmt.Errorf("couldn't find block for message index %d", msgIdx)
+		return containers.NewReadyPromise(uint64(0), fmt.Errorf("couldn't find block for message index %d", msgIdx))
 	}
 	extra := types.DeserializeHeaderExtraInformation(block.Header())
-	return extra.ArbOSFormatVersion, nil
+	return containers.NewReadyPromise(extra.ArbOSFormatVersion, nil)
 }
 
 func (s *ExecutionEngine) Start(ctx_in context.Context) {
 	s.StopWaiter.Start(ctx_in, s)
+
 	s.LaunchThread(func(ctx context.Context) {
 		for {
 			if s.syncTillBlock > 0 && s.latestBlock != nil && s.latestBlock.NumberU64() >= s.syncTillBlock {
@@ -1104,8 +1083,48 @@ func (s *ExecutionEngine) Start(ctx_in context.Context) {
 	}
 }
 
-func (s *ExecutionEngine) Maintenance(capLimit uint64) error {
-	s.createBlocksMutex.Lock()
-	defer s.createBlocksMutex.Unlock()
-	return s.bc.FlushTrieDB(common.StorageSize(capLimit))
+func (s *ExecutionEngine) ShouldTriggerMaintenance(trieLimitBeforeFlushMaintenance time.Duration) bool {
+	if s.runningMaintenance.Load() {
+		return false
+	}
+
+	procTimeBeforeFlush, err := s.bc.ProcTimeBeforeFlush()
+	if err != nil {
+		log.Error("failed to get time before flush", "err")
+		return false
+	}
+
+	if procTimeBeforeFlush <= trieLimitBeforeFlushMaintenance/2 {
+		log.Warn("Time before flush is too low, maintenance should be triggered soon", "procTimeBeforeFlush", procTimeBeforeFlush)
+	}
+	return procTimeBeforeFlush <= trieLimitBeforeFlushMaintenance
+}
+
+func (s *ExecutionEngine) TriggerMaintenance(capLimit uint64) {
+	if s.runningMaintenance.Swap(true) {
+		log.Info("Maintenance already running, skipping")
+		return
+	}
+
+	// Flushing the trie DB can be a long operation, so we run it in a new thread
+	s.LaunchThread(func(ctx context.Context) {
+		defer s.runningMaintenance.Store(false)
+
+		s.createBlocksMutex.Lock()
+		defer s.createBlocksMutex.Unlock()
+
+		log.Info("Flushing trie db through maintenance, it can take a while")
+		err := s.bc.FlushTrieDB(common.StorageSize(capLimit))
+		if err != nil {
+			log.Error("Failed to flush trie db through maintenance", "err", err)
+		} else {
+			log.Info("Flushed trie db through maintenance completed successfully")
+		}
+	})
+}
+
+func (s *ExecutionEngine) MaintenanceStatus() *execution.MaintenanceStatus {
+	return &execution.MaintenanceStatus{
+		IsRunning: s.runningMaintenance.Load(),
+	}
 }

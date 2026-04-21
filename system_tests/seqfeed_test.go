@@ -13,11 +13,15 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/rlp"
 
 	"github.com/offchainlabs/nitro/arbnode"
+	dbschema "github.com/offchainlabs/nitro/arbnode/db-schema"
 	"github.com/offchainlabs/nitro/arbos/arbostypes"
 	"github.com/offchainlabs/nitro/arbos/l1pricing"
+	"github.com/offchainlabs/nitro/arbos/util"
 	"github.com/offchainlabs/nitro/arbutil"
 	"github.com/offchainlabs/nitro/broadcastclient"
 	"github.com/offchainlabs/nitro/broadcaster/backlog"
@@ -55,14 +59,14 @@ func TestSequencerFeed(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	builderSeq := NewNodeBuilder(ctx).DefaultConfig(t, false)
+	builderSeq := NewNodeBuilder(ctx).DefaultConfig(t, false).DontParalellise()
 	builderSeq.nodeConfig.Feed.Output = *newBroadcasterConfigTest()
 	cleanupSeq := builderSeq.Build(t)
 	defer cleanupSeq()
 	seqInfo, seqNode, seqClient := builderSeq.L2Info, builderSeq.L2.ConsensusNode, builderSeq.L2.Client
 
 	port := testhelpers.AddrTCPPort(seqNode.BroadcastServer.ListenerAddr(), t)
-	builder := NewNodeBuilder(ctx).DefaultConfig(t, false)
+	builder := NewNodeBuilder(ctx).DefaultConfig(t, false).DontParalellise()
 	builder.nodeConfig.Feed.Input = *newBroadcastClientConfigTest(port)
 	builder.takeOwnership = false
 	cleanup := builder.Build(t)
@@ -93,11 +97,10 @@ func TestSequencerFeed(t *testing.T) {
 }
 
 func TestRelayedSequencerFeed(t *testing.T) {
-	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	builderSeq := NewNodeBuilder(ctx).DefaultConfig(t, false)
+	builderSeq := NewNodeBuilder(ctx).DefaultConfig(t, false).DontParalellise()
 	builderSeq.nodeConfig.Feed.Output = *newBroadcasterConfigTest()
 	cleanupSeq := builderSeq.Build(t)
 	defer cleanupSeq()
@@ -120,7 +123,7 @@ func TestRelayedSequencerFeed(t *testing.T) {
 	defer currentRelay.StopAndWait()
 
 	port = testhelpers.AddrTCPPort(currentRelay.GetListenerAddr(), t)
-	builder := NewNodeBuilder(ctx).DefaultConfig(t, false)
+	builder := NewNodeBuilder(ctx).DefaultConfig(t, false).DontParalellise()
 	builder.nodeConfig.Feed.Input = *newBroadcastClientConfigTest(port)
 	builder.takeOwnership = false
 	cleanup := builder.Build(t)
@@ -187,8 +190,6 @@ func compareAllMsgResultsFromConsensusAndExecution(
 }
 
 func testLyingSequencer(t *testing.T, dasModeStr string) {
-	t.Parallel()
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -198,7 +199,7 @@ func testLyingSequencer(t *testing.T, dasModeStr string) {
 
 	nodeConfigA.BatchPoster.Enable = true
 	nodeConfigA.Feed.Output.Enable = false
-	builder := NewNodeBuilder(ctx).DefaultConfig(t, true)
+	builder := NewNodeBuilder(ctx).DefaultConfig(t, true).DontParalellise().WithTakeOwnership(false)
 	builder.nodeConfig = nodeConfigA
 	builder.chainConfig = chainConfig
 	builder.L2Info = nil
@@ -363,7 +364,7 @@ func testBlockHashComparison(t *testing.T, blockHash *common.Hash, mustMismatch 
 
 	port := testhelpers.AddrTCPPort(wsBroadcastServer.ListenerAddr(), t)
 
-	builder := NewNodeBuilder(ctx).DefaultConfig(t, true)
+	builder := NewNodeBuilder(ctx).DefaultConfig(t, true).DontParalellise().WithTakeOwnership(false)
 	builder.nodeConfig.Feed.Input = *newBroadcastClientConfigTest(port)
 	cleanup := builder.Build(t)
 	defer cleanup()
@@ -380,11 +381,11 @@ func testBlockHashComparison(t *testing.T, blockHash *common.Hash, mustMismatch 
 		RequestId:   nil,
 		L1BaseFee:   nil,
 	}
-	l1IncomingMsg, err := gethexec.MessageFromTxes(
-		&l1IncomingMsgHeader,
-		types.Transactions{tx},
-		[]error{nil},
-	)
+	hooks := gethexec.MakeZeroTxSizeSequencingHooksForTesting(types.Transactions{tx}, nil, nil, nil)
+	_, _, err = hooks.NextTxToSequence()
+	Require(t, err)
+	hooks.InsertLastTxError(nil)
+	l1IncomingMsg, err := hooks.MessageFromTxes(&l1IncomingMsgHeader)
 	Require(t, err)
 
 	broadcastMessage := message.BroadcastMessage{
@@ -489,4 +490,92 @@ func TestPopulateFeedBacklog(t *testing.T) {
 	if logHandler.WasLogged(arbnode.BlockHashMismatchLogMsg) {
 		t.Fatal("BlockHashMismatchLogMsg was logged unexpectedly")
 	}
+}
+
+func TestRegressionInPopulateFeedBacklog(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	builder := NewNodeBuilder(ctx).DefaultConfig(t, true)
+	builder.BuildL1(t)
+
+	userAccount := "User2"
+	builder.L2Info.GenerateAccount(userAccount)
+
+	// Guarantees that nodes will rely only on the feed to receive messages
+	builder.nodeConfig.BatchPoster.Enable = false
+	builder.BuildL2OnL1(t)
+
+	// Sends a transaction
+	tx := builder.L2Info.PrepareTx("Owner", userAccount, builder.L2Info.TransferGas, big.NewInt(1e12), nil)
+	err := builder.L2.Client.SendTransaction(ctx, tx)
+	Require(t, err)
+	_, err = builder.L2.EnsureTxSucceeded(tx)
+	Require(t, err)
+
+	// Create dummy batch posting report data
+	data, err := createDummyBatchPostingReportTransaction()
+	Require(t, err)
+
+	// sub in correct batch hash
+	batchData, _, err := builder.L2.ConsensusNode.InboxReader.GetSequencerMessageBytes(ctx, 0)
+	Require(t, err)
+	expectedBatchHash := crypto.Keccak256Hash(batchData)
+	copy(data[52:52+32], expectedBatchHash[:])
+
+	dummyMessage := arbostypes.MessageWithMetadata{
+		Message: &arbostypes.L1IncomingMessage{
+			Header: &arbostypes.L1IncomingMessageHeader{
+				Kind:        arbostypes.L1MessageType_BatchPostingReport,
+				Poster:      l1pricing.BatchPosterAddress,
+				BlockNumber: 0,
+				Timestamp:   0,
+			},
+			L2msg: data,
+		},
+		DelayedMessagesRead: 0,
+	}
+
+	// Override last index to be a batch posting report
+	messageCount, err := builder.L2.ConsensusNode.TxStreamer.GetMessageCount()
+	if err != nil {
+		panic(fmt.Sprintf("error getting tx streamer message count: %v", err))
+	}
+	key := dbKey(dbschema.MessagePrefix, uint64(messageCount-1))
+	msgBytes, err := rlp.EncodeToBytes(dummyMessage)
+	if err != nil {
+		panic(fmt.Sprintf("error encoding dummy message: %v", err))
+	}
+	batch := builder.L2.ConsensusNode.ArbDB.NewBatch()
+	if err := batch.Put(key, msgBytes); err != nil {
+		panic(fmt.Sprintf("error putting dummy message to db: %v", err))
+	}
+	err = batch.Write()
+	if err != nil {
+		panic(fmt.Sprintf("error writing batch to db: %v", err))
+	}
+
+	// Shutdown node and starts a new one with same data dir and output feed enabled.
+	// The new node will populate the feedbacklog since already has a message, related to the
+	// transaction previously sent, stored in disk.
+	builder.L2.cleanup()
+	dataDir := builder.l2StackConfig.DataDir
+	builder.l2StackConfig.DataDir = dataDir
+	builder.nodeConfig.Feed.Output = *newBroadcasterConfigTest()
+	cleanup := builder.BuildL2OnL1(t)
+	defer cleanup()
+}
+
+func createDummyBatchPostingReportTransaction() ([]byte, error) {
+	batchTimestamp := new(big.Int)
+	batchTimestamp.SetUint64(0)
+	batchPosterAddr := common.Address{}
+	batchNum := uint64(0)
+	batchGas := uint64(0)
+	l1BaseFee := new(big.Int)
+	l1BaseFee.SetUint64(0)
+
+	return util.PackInternalTxDataBatchPostingReport(
+		batchTimestamp, batchPosterAddr, batchNum, batchGas, l1BaseFee,
+	)
 }

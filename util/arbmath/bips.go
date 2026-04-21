@@ -5,7 +5,11 @@ package arbmath
 
 import "math/big"
 
+// Bips (basis points) are used to represent percentages as integers.
 type Bips int64
+
+// UBips (unsigned basis points) are used to represent percentages as
+// unsigned integers.
 type UBips uint64
 
 const OneInBips Bips = 10000
@@ -63,4 +67,8 @@ func BigDivToBips(dividend, divisor *big.Int) Bips {
 	value := BigMulByInt(dividend, int64(OneInBips))
 	value.Div(value, divisor)
 	return Bips(BigToIntSaturating(value))
+}
+
+func SaturatingBipsAdd(a, b Bips) Bips {
+	return Bips(SaturatingAdd(int64(a), int64(b)))
 }

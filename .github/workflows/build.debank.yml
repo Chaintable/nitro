@@ -28,8 +28,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          clean: true
           ref: ${{ github.event.pull_request.head.sha }}
-          submodules: true
+          submodules: recursive
           token: ${{ steps.generate-token.outputs.token }}
 
       - name: Set env
