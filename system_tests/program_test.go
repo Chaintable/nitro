@@ -1348,13 +1348,21 @@ func testMemoryGrowMachineLimit(t *testing.T, jit bool) {
 	l2client := builder.L2.Client
 	defer cleanup()
 
+	// PageLimit=10 is set for both versions.
+	arbOwner, err := precompilesgen.NewArbOwner(types.ArbOwnerAddress, l2client)
+	Require(t, err)
+	limitTx, err := arbOwner.SetWasmPageLimit(&auth, 10)
+	Require(t, err)
+	_, err = EnsureTxSucceeded(ctx, l2client, limitTx)
+	Require(t, err)
+
 	type growCase struct {
 		pages         uint32
 		shouldSucceed bool
 		desc          string
 	}
 
-	// PageLimit=10 is set for both versions.  In v2 (ArbOS < 59) the consensus
+	// In v2 (ArbOS < 59) the consensus
 	// cap is not yet active, so 9, 10, and 11 pages all succeed.  The only v2
 	// guard is the machine hard ceiling (MAX_WASM_PAGES=65534) via HeapBound.
 	// Without the fix, wasmer's check "new_pages > 65536" evaluated to
@@ -1405,13 +1413,6 @@ func testMemoryGrowMachineLimit(t *testing.T, jit bool) {
 			}
 		}
 	}
-
-	arbOwner, err := precompilesgen.NewArbOwner(types.ArbOwnerAddress, l2client)
-	Require(t, err)
-	limitTx, err := arbOwner.SetWasmPageLimit(&auth, 10)
-	Require(t, err)
-	_, err = EnsureTxSucceeded(ctx, l2client, limitTx)
-	Require(t, err)
 
 	runCases(&addr, v2Cases)
 
