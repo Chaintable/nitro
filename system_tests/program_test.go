@@ -1328,6 +1328,94 @@ func TestProgramMemoryGrowOverflowCompatibilityNative(t *testing.T) {
 	runEthCall(payForMemoryGrowV3, (1<<16)+1, false)
 }
 
+func TestProgramMemoryGrowMachineLimit(t *testing.T) {
+	testMemoryGrowMachineLimit(t, true)
+}
+
+// testMemoryGrowMachineLimit verifies that both the JIT (wasmer) and the
+// prover (arbitrator) agree on the outcome of memory.grow for a range of page
+// counts, across Stylus v2 (ArbOS_51) and v3 (ArbOS_59).
+//
+// memory-grow.wat reads N (u32 LE) from calldata, calls memory.grow(N), and
+// returns 0 (tx succeeds) when grow returned a valid page count, or 1 (tx
+// reverts) when grow returned -1 (machine ceiling hit).
+func testMemoryGrowMachineLimit(t *testing.T, jit bool) {
+	builder, auth, cleanup := setupProgramTest(t, jit, func(b *NodeBuilder) {
+		b.WithArbOSVersion(params.ArbosVersion_51)
+	})
+	ctx := builder.ctx
+	l2info := builder.L2Info
+	l2client := builder.L2.Client
+	defer cleanup()
+
+	type growCase struct {
+		pages         uint32
+		shouldSucceed bool
+		desc          string
+	}
+
+	// Stylus v2 (ArbOS < 59): pay_for_memory_grow takes u16, so grow(1<<16)
+	// silently charges 0 pages.  The only guard is the machine hard ceiling
+	// (MAX_WASM_PAGES = 65534) enforced by the HeapBound middleware.
+	// Without the fix, wasmer's check "new_pages > 65536" evaluated to
+	// "65536 > 65536 = false" and allowed the grow; the prover rejected it.
+	v2Cases := []growCase{
+		{pages: 1, shouldSucceed: true,
+			desc: "small grow under machine ceiling succeeds"},
+		{pages: 1 << 16, shouldSucceed: false,
+			desc: "pay_for_memory_grow(65536) truncates to u16=0 (no charge); machine ceiling (65534) enforced by HeapBound"},
+	}
+
+	// Stylus v3 (ArbOS >= 59): pay_for_memory_grow takes u32, so grow(1<<16)
+	// triggers the consensus page-limit check (StylusParams.PageLimit = 128)
+	// and OOGs before memory.grow is reached; both machines agree.
+	v3Cases := []growCase{
+		{pages: 1, shouldSucceed: true,
+			desc: "small grow still succeeds in v3"},
+		{pages: 1 << 16, shouldSucceed: false,
+			desc: "pay_for_memory_grow(65536) passes full u32; consensus page limit (128) OOGs both machines"},
+	}
+
+	addr := deployWasm(t, ctx, auth, l2client, watFile("memory-grow"))
+
+	sendGrow := func(to *common.Address, n uint32) *types.Transaction {
+		t.Helper()
+		data := binary.LittleEndian.AppendUint32(nil, n)
+		tx := l2info.PrepareTxTo("Owner", to, 1e9, nil, data)
+		Require(t, l2client.SendTransaction(ctx, tx))
+		return tx
+	}
+
+	runCases := func(to *common.Address, cases []growCase) {
+		t.Helper()
+		for _, tc := range cases {
+			tx := sendGrow(to, tc.pages)
+			if tc.shouldSucceed {
+				_, err := EnsureTxSucceeded(ctx, l2client, tx)
+				Require(t, err, "pages", tc.pages, "desc", tc.desc)
+			} else {
+				EnsureTxFailed(t, ctx, l2client, tx)
+			}
+		}
+	}
+
+	runCases(&addr, v2Cases)
+
+	arbOwner, err := precompilesgen.NewArbOwner(types.ArbOwnerAddress, l2client)
+	Require(t, err)
+	upgradeTx, err := arbOwner.ScheduleArbOSUpgrade(&auth, params.ArbosVersion_59, 0)
+	Require(t, err)
+	_, err = builder.L2.EnsureTxSucceeded(upgradeTx)
+	Require(t, err)
+	TransferBalance(t, "Owner", "Owner", big.NewInt(1), l2info, l2client, ctx)
+	checkArbOSVersion(t, builder.L2, params.ArbosVersion_59, "after ArbOS 59 upgrade")
+
+	addrV3 := deployWasm(t, ctx, auth, l2client, watFile("memory-grow"))
+	runCases(&addrV3, v3Cases)
+
+	validateBlocks(t, 1, jit, builder)
+}
+
 func testMaxStylusOpenPages(t *testing.T, jit bool) {
 	const pageLimit uint16 = 20
 	builder, auth, cleanup := setupProgramTest(t, jit, func(b *NodeBuilder) {
