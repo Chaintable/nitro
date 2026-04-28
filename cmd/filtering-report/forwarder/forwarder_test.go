@@ -18,6 +18,8 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 
 	"github.com/offchainlabs/nitro/cmd/filtering-report/api"
+	"github.com/offchainlabs/nitro/cmd/filtering-report/signer"
+	"github.com/offchainlabs/nitro/cmd/filtering-report/signer/signertest"
 	"github.com/offchainlabs/nitro/cmd/genericconf"
 	"github.com/offchainlabs/nitro/execution/gethexec/addressfilter"
 	"github.com/offchainlabs/nitro/util/sqsclient"
@@ -224,6 +226,83 @@ func TestForwarder_ReceiveError(t *testing.T) {
 
 	if interval != forwarder.config.PollInterval {
 		t.Fatalf("expected poll interval %v on receive error, got %v", forwarder.config.PollInterval, interval)
+	}
+}
+
+func TestForwarder_SignsRequest_VerifiedByVerifier(t *testing.T) {
+	const testSAN = "https://webhook-signer.arbitrum.internal"
+
+	pki := signertest.NewPKI(t)
+	leafPriv, _, leafDER := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
+	dir := t.TempDir()
+	pemPath := signertest.WriteCombinedPEM(t, dir, leafPriv, leafDER)
+	caPath := signertest.WriteCAPEMFile(t, dir, pki.CACertPEM)
+
+	verifier, err := signer.NewVerifier(&signer.VerifierConfig{
+		CARootPEMFile: caPath,
+		ExpectedSAN:   testSAN,
+	})
+	if err != nil {
+		t.Fatalf("NewVerifier: %v", err)
+	}
+
+	var verifyErr error
+	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			verifyErr = fmt.Errorf("read body: %w", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if err := verifier.VerifyHTTPRequest(r, body); err != nil {
+			verifyErr = err
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer externalEndpointServer.Close()
+
+	queueClient := &sqsclient.MockQueueClient{}
+	rpcClient := newTestStack(t, queueClient)
+	reports := []addressfilter.FilteredTxReport{{
+		ID:                "",
+		TxHash:            common.HexToHash("0x01"),
+		TxRLP:             nil,
+		FilteredAddresses: nil,
+		ChainID:           0,
+		BlockNumber:       0,
+		ParentBlockHash:   common.Hash{},
+		PositionInBlock:   0,
+		FilteredAt:        time.Time{},
+		IsDelayed:         false,
+		DelayedReportData: nil,
+	}}
+	if err := rpcClient.Call(nil, "filteringreport_reportFilteredTransactions", reports); err != nil {
+		t.Fatal(err)
+	}
+
+	config := &Config{
+		Workers:            1,
+		PollInterval:       time.Second,
+		SQSWaitTimeSeconds: DefaultConfig.SQSWaitTimeSeconds,
+		ExternalEndpoint: genericconf.HTTPClientConfig{
+			URL:     externalEndpointServer.URL,
+			Timeout: genericconf.HTTPClientConfigDefault.Timeout,
+		},
+		Signer: signer.Config{PEMFile: pemPath},
+	}
+	fwd, err := New(config, queueClient)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	fwd.pollAndForward(t.Context())
+
+	if verifyErr != nil {
+		t.Fatalf("verifier rejected signed request: %v", verifyErr)
+	}
+	if deleted := queueClient.DeletedReceiptHandles(); len(deleted) != 1 {
+		t.Fatalf("expected 1 delete after successful signed forward, got %d", len(deleted))
 	}
 }
 
