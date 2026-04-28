@@ -53,15 +53,15 @@ func NewPKI(t *testing.T) *PKI {
 }
 
 type LeafOptions struct {
-	SANURI    string
+	URI       string
 	NotBefore time.Time
 	NotAfter  time.Time
 	KeyUsage  x509.KeyUsage
 }
 
-func DefaultLeafOptions(sanURI string) LeafOptions {
+func DefaultLeafOptions(uri string) LeafOptions {
 	return LeafOptions{
-		SANURI:    sanURI,
+		URI:       uri,
 		NotBefore: time.Now().Add(-time.Hour),
 		NotAfter:  time.Now().Add(time.Hour),
 		KeyUsage:  x509.KeyUsageDigitalSignature,
@@ -74,9 +74,9 @@ func (p *PKI) IssueLeaf(t *testing.T, opts LeafOptions) (priv ed25519.PrivateKey
 	if err != nil {
 		t.Fatalf("generate leaf key: %v", err)
 	}
-	uri, err := url.Parse(opts.SANURI)
+	uri, err := url.Parse(opts.URI)
 	if err != nil {
-		t.Fatalf("parse SAN URI: %v", err)
+		t.Fatalf("parse leaf URI: %v", err)
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(2),

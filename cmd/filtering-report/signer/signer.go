@@ -54,7 +54,6 @@ func (c *Config) Validate() error {
 type credentials struct {
 	privateKey ed25519.PrivateKey
 	leafCert   *x509.Certificate
-	leafDER    []byte
 }
 
 type Signer struct {
@@ -118,7 +117,7 @@ func (s *Signer) SignHTTPRequest(req *http.Request, body []byte, now time.Time) 
 	signature := ed25519.Sign(creds.privateKey, payload)
 
 	req.Header.Set(HeaderSignature, base64.StdEncoding.EncodeToString(signature))
-	req.Header.Set(HeaderSignatureCert, base64.StdEncoding.EncodeToString(creds.leafDER))
+	req.Header.Set(HeaderSignatureCert, base64.StdEncoding.EncodeToString(creds.leafCert.Raw))
 	req.Header.Set(HeaderSignatureTimestamp, timestamp)
 	return nil
 }

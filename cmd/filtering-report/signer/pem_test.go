@@ -59,6 +59,15 @@ func TestParseCombinedPEM_RejectsDuplicatePrivateKey(t *testing.T) {
 	assertParseError(t, err, errDuplicatePrivateKey)
 }
 
+func TestParseCombinedPEM_RejectsCAAsLeaf(t *testing.T) {
+	pki := signertest.NewPKI(t)
+	keyPEM, certPEM := signertest.EncodePEMBundle(t, pki.CAPriv, pki.CACertDER)
+	bundle := slices.Concat(keyPEM, certPEM)
+
+	_, err := parseCombinedPEM(bundle)
+	assertParseError(t, err, errLeafIsCA)
+}
+
 func TestParseCombinedPEM_RejectsUnsupportedBlockType(t *testing.T) {
 	bundle := []byte("-----BEGIN EC PRIVATE KEY-----\nQUJD\n-----END EC PRIVATE KEY-----\n")
 	_, err := parseCombinedPEM(bundle)

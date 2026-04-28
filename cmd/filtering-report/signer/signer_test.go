@@ -14,7 +14,7 @@ import (
 	"github.com/offchainlabs/nitro/cmd/filtering-report/signer/signertest"
 )
 
-const testSAN = "https://webhook-signer.arbitrum.internal"
+const testSAN = "https://test-webhook-signer.internal"
 
 func TestSigner_RoundTripVerifiedByVerifier(t *testing.T) {
 	pki := signertest.NewPKI(t)
@@ -54,7 +54,7 @@ func TestSigner_ReloadPicksUpNewCert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSigner: %v", err)
 	}
-	first := s.creds.Load().leafDER
+	first := s.creds.Load().leafCert.Raw
 
 	priv2, _, leafDER2 := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
 	keyPEM2, certPEM2 := signertest.EncodePEMBundle(t, priv2, leafDER2)
@@ -64,7 +64,7 @@ func TestSigner_ReloadPicksUpNewCert(t *testing.T) {
 	if err := s.reloadConfig(); err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if bytes.Equal(first, s.creds.Load().leafDER) {
+	if bytes.Equal(first, s.creds.Load().leafCert.Raw) {
 		t.Fatal("expected leafDER to change after reload")
 	}
 }

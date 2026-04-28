@@ -230,7 +230,7 @@ func TestForwarder_ReceiveError(t *testing.T) {
 }
 
 func TestForwarder_SignsRequest_VerifiedByVerifier(t *testing.T) {
-	const testSAN = "https://webhook-signer.arbitrum.internal"
+	const testSAN = "https://test-webhook-signer.internal"
 
 	pki := signertest.NewPKI(t)
 	leafPriv, _, leafDER := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
@@ -299,6 +299,62 @@ func TestForwarder_SignsRequest_VerifiedByVerifier(t *testing.T) {
 
 	if deleted := queueClient.DeletedReceiptHandles(); len(deleted) != 1 {
 		t.Fatalf("expected 1 delete after successful signed forward, got %d", len(deleted))
+	}
+}
+
+func TestForwarder_DoesNotDeleteOnSignFailure(t *testing.T) {
+	const testSAN = "https://test-webhook-signer.internal"
+
+	pki := signertest.NewPKI(t)
+	opts := signertest.DefaultLeafOptions(testSAN)
+	opts.NotBefore = time.Now().Add(-2 * time.Hour)
+	opts.NotAfter = time.Now().Add(-time.Hour)
+	leafPriv, _, leafDER := pki.IssueLeaf(t, opts)
+	pemPath := signertest.WriteCombinedPEM(t, t.TempDir(), leafPriv, leafDER)
+
+	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("external endpoint should not be hit when signing fails")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer externalEndpointServer.Close()
+
+	queueClient := &sqsclient.MockQueueClient{}
+	rpcClient := newTestStack(t, queueClient)
+	reports := []addressfilter.FilteredTxReport{{
+		ID:                "",
+		TxHash:            common.HexToHash("0x01"),
+		TxRLP:             nil,
+		FilteredAddresses: nil,
+		ChainID:           0,
+		BlockNumber:       0,
+		ParentBlockHash:   common.Hash{},
+		PositionInBlock:   0,
+		FilteredAt:        time.Time{},
+		IsDelayed:         false,
+		DelayedReportData: nil,
+	}}
+	if err := rpcClient.Call(nil, "filteringreport_reportFilteredTransactions", reports); err != nil {
+		t.Fatal(err)
+	}
+
+	config := &Config{
+		Workers:            1,
+		PollInterval:       time.Second,
+		SQSWaitTimeSeconds: DefaultConfig.SQSWaitTimeSeconds,
+		ExternalEndpoint: genericconf.HTTPClientConfig{
+			URL:     externalEndpointServer.URL,
+			Timeout: genericconf.HTTPClientConfigDefault.Timeout,
+		},
+		Signer: signer.Config{PEMFile: pemPath},
+	}
+	fwd, err := New(config, queueClient)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	fwd.pollAndForward(t.Context())
+
+	if deleted := queueClient.DeletedReceiptHandles(); len(deleted) != 0 {
+		t.Fatalf("expected 0 deletes after sign failure, got %d", len(deleted))
 	}
 }
 

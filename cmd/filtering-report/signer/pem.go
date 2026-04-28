@@ -91,6 +91,5 @@ func parseCombinedPEM(data []byte) (*credentials, error) {
 	return &credentials{
 		privateKey: privateKey,
 		leafCert:   leaf,
-		leafDER:    leaf.Raw,
 	}, nil
 }

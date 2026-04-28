@@ -4,12 +4,12 @@
 package forwarder
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/spf13/pflag"
@@ -110,47 +110,30 @@ func (r *Forwarder) pollAndForward(ctx context.Context) time.Duration {
 		return r.config.PollInterval
 	}
 	msg := msgs[0]
-	body := []byte(*msg.Body)
-
-	req, err := r.buildSignedRequest(ctx, body)
-	if err != nil {
-		// Build/sign failures are sticky (broken or missing credentials, malformed
-		// endpoint URL) until the next signer reload or config change, so back off
-		// rather than burning CPU on the same SQS message.
-		log.Error("Failed to build signed request", "err", err, "messageId", *msg.MessageId)
-		return r.config.PollInterval
-	}
-
-	if err := r.sendRequest(req); err != nil {
-		// Network and HTTP errors may be transient; retry immediately.
+	if err := r.forwardToEndpoint(ctx, *msg.Body); err != nil {
 		log.Error("Failed to forward report to external endpoint", "err", err, "messageId", *msg.MessageId)
 		return 0
 	}
-
 	if err := r.queueClient.Delete(ctx, *msg.ReceiptHandle); err != nil {
 		log.Error("Failed to delete SQS message after forwarding", "err", err, "messageId", *msg.MessageId)
 	}
 	return 0
 }
 
-func (r *Forwarder) buildSignedRequest(ctx context.Context, body []byte) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.config.ExternalEndpoint.URL, bytes.NewReader(body))
+func (r *Forwarder) forwardToEndpoint(ctx context.Context, body string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.config.ExternalEndpoint.URL, strings.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
+		return fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if r.signer != nil {
-		if err := r.signer.SignHTTPRequest(req, body, time.Now()); err != nil {
-			return nil, fmt.Errorf("sign request: %w", err)
+		if err := r.signer.SignHTTPRequest(req, []byte(body), time.Now()); err != nil {
+			return fmt.Errorf("sign request: %w", err)
 		}
 	}
-	return req, nil
-}
-
-func (r *Forwarder) sendRequest(req *http.Request) error {
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("send request: %w", err)
 	}
 	defer func() {
 		if _, drainErr := io.Copy(io.Discard, resp.Body); drainErr != nil {

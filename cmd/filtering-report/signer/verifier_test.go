@@ -9,6 +9,8 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -146,16 +148,34 @@ func TestVerifier_RejectsMissingHeader(t *testing.T) {
 	}
 }
 
-func TestNewVerifier_RejectsNegativeTimestampSkew(t *testing.T) {
+func TestNewVerifier_ConfigValidation(t *testing.T) {
 	pki := signertest.NewPKI(t)
-	caPath := signertest.WriteCAPEMFile(t, t.TempDir(), pki.CACertPEM)
-	_, err := NewVerifier(&VerifierConfig{
-		CARootPEMFile: caPath,
-		ExpectedSAN:   testSAN,
-		TimestampSkew: -time.Second,
-	})
-	if err == nil || !strings.Contains(err.Error(), "timestamp-skew must be >= 0") {
-		t.Fatalf("expected negative-skew error, got: %v", err)
+	dir := t.TempDir()
+	validCAPath := signertest.WriteCAPEMFile(t, dir, pki.CACertPEM)
+	noCertsPath := filepath.Join(dir, "garbage.pem")
+	if err := os.WriteFile(noCertsPath, []byte("not a certificate"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		cfg     *VerifierConfig
+		wantSub string
+	}{
+		{"nil config", nil, "config must not be nil"},
+		{"empty CA path", &VerifierConfig{ExpectedSAN: testSAN}, "ca-root-pem-file is required"},
+		{"empty SAN", &VerifierConfig{CARootPEMFile: validCAPath}, "expected-san is required"},
+		{"unreadable CA", &VerifierConfig{CARootPEMFile: filepath.Join(dir, "missing.pem"), ExpectedSAN: testSAN}, "read CA root PEM"},
+		{"CA with no certs", &VerifierConfig{CARootPEMFile: noCertsPath, ExpectedSAN: testSAN}, "CA root PEM contains no valid certificates"},
+		{"non-absolute SAN", &VerifierConfig{CARootPEMFile: validCAPath, ExpectedSAN: "not-absolute"}, "expected SAN must be an absolute URI"},
+		{"negative skew", &VerifierConfig{CARootPEMFile: validCAPath, ExpectedSAN: testSAN, TimestampSkew: -time.Second}, "timestamp-skew must be >= 0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewVerifier(tc.cfg)
+			if err == nil || !strings.Contains(err.Error(), tc.wantSub) {
+				t.Fatalf("expected error containing %q, got: %v", tc.wantSub, err)
+			}
+		})
 	}
 }
 
