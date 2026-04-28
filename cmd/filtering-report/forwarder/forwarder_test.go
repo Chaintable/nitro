@@ -246,16 +246,15 @@ func TestForwarder_SignsRequest_VerifiedByVerifier(t *testing.T) {
 		t.Fatalf("NewVerifier: %v", err)
 	}
 
-	var verifyErr error
 	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			verifyErr = fmt.Errorf("read body: %w", err)
+			t.Errorf("failed to read request body: %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 		if err := verifier.VerifyHTTPRequest(r, body); err != nil {
-			verifyErr = err
+			t.Errorf("verifier rejected signed request: %v", err)
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -298,9 +297,6 @@ func TestForwarder_SignsRequest_VerifiedByVerifier(t *testing.T) {
 	}
 	fwd.pollAndForward(t.Context())
 
-	if verifyErr != nil {
-		t.Fatalf("verifier rejected signed request: %v", verifyErr)
-	}
 	if deleted := queueClient.DeletedReceiptHandles(); len(deleted) != 1 {
 		t.Fatalf("expected 1 delete after successful signed forward, got %d", len(deleted))
 	}

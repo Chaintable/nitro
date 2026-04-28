@@ -59,6 +59,9 @@ func NewVerifier(c *VerifierConfig) (*Verifier, error) {
 		return nil, fmt.Errorf("expected SAN must be an absolute URI, got %q", c.ExpectedSAN)
 	}
 	skew := c.TimestampSkew
+	if skew < 0 {
+		return nil, fmt.Errorf("timestamp-skew must be >= 0, got %s", skew)
+	}
 	if skew == 0 {
 		skew = DefaultTimestampSkew
 	}

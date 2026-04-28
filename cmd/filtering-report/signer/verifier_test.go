@@ -146,6 +146,19 @@ func TestVerifier_RejectsMissingHeader(t *testing.T) {
 	}
 }
 
+func TestNewVerifier_RejectsNegativeTimestampSkew(t *testing.T) {
+	pki := signertest.NewPKI(t)
+	caPath := signertest.WriteCAPEMFile(t, t.TempDir(), pki.CACertPEM)
+	_, err := NewVerifier(&VerifierConfig{
+		CARootPEMFile: caPath,
+		ExpectedSAN:   testSAN,
+		TimestampSkew: -time.Second,
+	})
+	if err == nil || !strings.Contains(err.Error(), "timestamp-skew must be >= 0") {
+		t.Fatalf("expected negative-skew error, got: %v", err)
+	}
+}
+
 func TestVerifier_RejectsTamperedBody(t *testing.T) {
 	s, pki := newTestSigner(t, signertest.DefaultLeafOptions(testSAN))
 	v := newTestVerifier(t, pki, VerifierConfig{})
