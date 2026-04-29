@@ -126,3 +126,11 @@ func WriteCAPEMFile(t *testing.T, dir string, caPEM []byte) string {
 	}
 	return path
 }
+
+func SigningFixture(t *testing.T, opts LeafOptions) (pemPath, caPath string) {
+	t.Helper()
+	pki := NewPKI(t)
+	leafPriv, _, leafDER := pki.IssueLeaf(t, opts)
+	dir := t.TempDir()
+	return WriteCombinedPEM(t, dir, leafPriv, leafDER), WriteCAPEMFile(t, dir, pki.CACertPEM)
+}

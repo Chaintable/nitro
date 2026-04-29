@@ -5,7 +5,6 @@ package forwarder
 
 import (
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -19,7 +18,6 @@ import (
 	"github.com/offchainlabs/nitro/cmd/filtering-report/api"
 	"github.com/offchainlabs/nitro/cmd/filtering-report/signer"
 	"github.com/offchainlabs/nitro/cmd/filtering-report/signer/signertest"
-	"github.com/offchainlabs/nitro/cmd/genericconf"
 	"github.com/offchainlabs/nitro/execution/gethexec/addressfilter"
 	"github.com/offchainlabs/nitro/util/sqsclient"
 )
@@ -129,20 +127,14 @@ func TestForwarder_EndpointFailure_DoesNotDelete(t *testing.T) {
 }
 
 func TestForwarder_EmptyQueue(t *testing.T) {
-	externalEndpointServerCalled := false
-	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		externalEndpointServerCalled = true
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer externalEndpointServer.Close()
-
+	endpoint := NewMockExternalEndpoint(t)
 	queueClient := &sqsclient.MockQueueClient{}
 
-	forwarder := NewTestForwarder(t, queueClient, externalEndpointServer.URL)
+	forwarder := NewTestForwarder(t, queueClient, endpoint.URL())
 	interval := forwarder.pollAndForward(t.Context())
 
-	if externalEndpointServerCalled {
-		t.Fatal("expected no HTTP calls on empty queue")
+	if got := endpoint.ReceivedCount(); got != 0 {
+		t.Fatalf("expected no HTTP calls on empty queue, got %d", got)
 	}
 	deleted := queueClient.DeletedReceiptHandles()
 	if len(deleted) != 0 {
@@ -154,18 +146,17 @@ func TestForwarder_EmptyQueue(t *testing.T) {
 }
 
 func TestForwarder_ReceiveError(t *testing.T) {
-	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("expected no HTTP calls when Receive fails")
-	}))
-	defer externalEndpointServer.Close()
-
+	endpoint := NewMockExternalEndpoint(t)
 	queueClient := &sqsclient.MockQueueClient{
 		ReceiveErr: fmt.Errorf("simulated SQS error"),
 	}
 
-	forwarder := NewTestForwarder(t, queueClient, externalEndpointServer.URL)
+	forwarder := NewTestForwarder(t, queueClient, endpoint.URL())
 	interval := forwarder.pollAndForward(t.Context())
 
+	if got := endpoint.ReceivedCount(); got != 0 {
+		t.Fatalf("expected no HTTP calls when Receive fails, got %d", got)
+	}
 	if interval != forwarder.config.PollInterval {
 		t.Fatalf("expected poll interval %v on receive error, got %v", forwarder.config.PollInterval, interval)
 	}
@@ -173,12 +164,7 @@ func TestForwarder_ReceiveError(t *testing.T) {
 
 func TestForwarder_SignsRequest_VerifiedByVerifier(t *testing.T) {
 	const testSAN = "https://test-webhook-signer.internal"
-
-	pki := signertest.NewPKI(t)
-	leafPriv, _, leafDER := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
-	dir := t.TempDir()
-	pemPath := signertest.WriteCombinedPEM(t, dir, leafPriv, leafDER)
-	caPath := signertest.WriteCAPEMFile(t, dir, pki.CACertPEM)
+	pemPath, caPath := signertest.SigningFixture(t, signertest.DefaultLeafOptions(testSAN))
 
 	verifier, err := signer.NewVerifier(&signer.VerifierConfig{
 		CARootPEMFile: caPath,
@@ -187,60 +173,22 @@ func TestForwarder_SignsRequest_VerifiedByVerifier(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewVerifier: %v", err)
 	}
-
-	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Errorf("failed to read request body: %v", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		if err := verifier.VerifyHTTPRequest(r, body); err != nil {
-			t.Errorf("verifier rejected signed request: %v", err)
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer externalEndpointServer.Close()
+	endpoint := NewMockExternalEndpointWithVerifier(t, verifier)
 
 	queueClient := &sqsclient.MockQueueClient{}
 	stack := api.NewTestStack(t, queueClient)
 	rpcClient := stack.Attach()
 	t.Cleanup(func() { rpcClient.Close() })
-	reports := []addressfilter.FilteredTxReport{{
-		ID:                "",
-		TxHash:            common.HexToHash("0x01"),
-		TxRLP:             nil,
-		FilteredAddresses: nil,
-		ChainID:           0,
-		BlockNumber:       0,
-		ParentBlockHash:   common.Hash{},
-		PositionInBlock:   0,
-		FilteredAt:        time.Time{},
-		IsDelayed:         false,
-		DelayedReportData: nil,
-	}}
+
+	reports := []addressfilter.FilteredTxReport{{TxHash: common.HexToHash("0x01")}}
 	if err := rpcClient.Call(nil, "filteringreport_reportFilteredTransactions", reports); err != nil {
 		t.Fatal(err)
 	}
 
-	config := &Config{
-		Workers:            1,
-		PollInterval:       time.Second,
-		SQSWaitTimeSeconds: DefaultConfig.SQSWaitTimeSeconds,
-		ExternalEndpoint: genericconf.HTTPClientConfig{
-			URL:     externalEndpointServer.URL,
-			Timeout: genericconf.HTTPClientConfigDefault.Timeout,
-		},
-		Signer: signer.Config{PEMFile: pemPath},
-	}
-	fwd, err := New(config, queueClient)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	fwd := NewTestForwarderWithSigner(t, queueClient, endpoint.URL(), signer.Config{PEMFile: pemPath})
 	fwd.pollAndForward(t.Context())
 
+	endpoint.NextReport(t)
 	if deleted := queueClient.DeletedReceiptHandles(); len(deleted) != 1 {
 		t.Fatalf("expected 1 delete after successful signed forward, got %d", len(deleted))
 	}
@@ -248,57 +196,28 @@ func TestForwarder_SignsRequest_VerifiedByVerifier(t *testing.T) {
 
 func TestForwarder_DoesNotDeleteOnSignFailure(t *testing.T) {
 	const testSAN = "https://test-webhook-signer.internal"
-
-	pki := signertest.NewPKI(t)
 	opts := signertest.DefaultLeafOptions(testSAN)
 	opts.NotBefore = time.Now().Add(-2 * time.Hour)
 	opts.NotAfter = time.Now().Add(-time.Hour)
-	leafPriv, _, leafDER := pki.IssueLeaf(t, opts)
-	pemPath := signertest.WriteCombinedPEM(t, t.TempDir(), leafPriv, leafDER)
+	pemPath, _ := signertest.SigningFixture(t, opts)
 
-	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("external endpoint should not be hit when signing fails")
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer externalEndpointServer.Close()
-
+	endpoint := NewMockExternalEndpoint(t)
 	queueClient := &sqsclient.MockQueueClient{}
 	stack := api.NewTestStack(t, queueClient)
 	rpcClient := stack.Attach()
 	t.Cleanup(func() { rpcClient.Close() })
-	reports := []addressfilter.FilteredTxReport{{
-		ID:                "",
-		TxHash:            common.HexToHash("0x01"),
-		TxRLP:             nil,
-		FilteredAddresses: nil,
-		ChainID:           0,
-		BlockNumber:       0,
-		ParentBlockHash:   common.Hash{},
-		PositionInBlock:   0,
-		FilteredAt:        time.Time{},
-		IsDelayed:         false,
-		DelayedReportData: nil,
-	}}
+
+	reports := []addressfilter.FilteredTxReport{{TxHash: common.HexToHash("0x01")}}
 	if err := rpcClient.Call(nil, "filteringreport_reportFilteredTransactions", reports); err != nil {
 		t.Fatal(err)
 	}
 
-	config := &Config{
-		Workers:            1,
-		PollInterval:       time.Second,
-		SQSWaitTimeSeconds: DefaultConfig.SQSWaitTimeSeconds,
-		ExternalEndpoint: genericconf.HTTPClientConfig{
-			URL:     externalEndpointServer.URL,
-			Timeout: genericconf.HTTPClientConfigDefault.Timeout,
-		},
-		Signer: signer.Config{PEMFile: pemPath},
-	}
-	fwd, err := New(config, queueClient)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	fwd := NewTestForwarderWithSigner(t, queueClient, endpoint.URL(), signer.Config{PEMFile: pemPath})
 	fwd.pollAndForward(t.Context())
 
+	if got := endpoint.ReceivedCount(); got != 0 {
+		t.Fatalf("expected endpoint not hit on sign failure, got %d requests", got)
+	}
 	if deleted := queueClient.DeletedReceiptHandles(); len(deleted) != 0 {
 		t.Fatalf("expected 0 deletes after sign failure, got %d", len(deleted))
 	}

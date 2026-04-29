@@ -17,17 +17,14 @@ import (
 const testSAN = "https://test-webhook-signer.internal"
 
 func TestSigner_RoundTripVerifiedByVerifier(t *testing.T) {
-	pki := signertest.NewPKI(t)
-	priv, _, leafDER := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
-	dir := t.TempDir()
-	pemPath := signertest.WriteCombinedPEM(t, dir, priv, leafDER)
+	pemPath, caPath := signertest.SigningFixture(t, signertest.DefaultLeafOptions(testSAN))
 
 	s, err := NewSigner(&Config{PEMFile: pemPath})
 	if err != nil {
 		t.Fatalf("NewSigner: %v", err)
 	}
 	v, err := NewVerifier(&VerifierConfig{
-		CARootPEMFile: signertest.WriteCAPEMFile(t, dir, pki.CACertPEM),
+		CARootPEMFile: caPath,
 		ExpectedSAN:   testSAN,
 	})
 	if err != nil {
