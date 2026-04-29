@@ -6,8 +6,6 @@ package arbtest
 import (
 	"context"
 	"math/big"
-	"net"
-	"net/http"
 	"testing"
 	"time"
 
@@ -18,13 +16,14 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/rpc"
 
 	"github.com/offchainlabs/nitro/arbnode"
 	"github.com/offchainlabs/nitro/arbos"
 	"github.com/offchainlabs/nitro/arbos/arbostypes"
 	"github.com/offchainlabs/nitro/arbos/l2pricing"
 	"github.com/offchainlabs/nitro/cmd/chaininfo"
+	filteringreportapi "github.com/offchainlabs/nitro/cmd/filtering-report/api"
+	"github.com/offchainlabs/nitro/cmd/filtering-report/forwarder"
 	"github.com/offchainlabs/nitro/execution/gethexec"
 	"github.com/offchainlabs/nitro/execution/gethexec/addressfilter"
 	"github.com/offchainlabs/nitro/execution/gethexec/eventfilter"
@@ -32,6 +31,7 @@ import (
 	"github.com/offchainlabs/nitro/solgen/go/localgen"
 	"github.com/offchainlabs/nitro/solgen/go/precompilesgen"
 	"github.com/offchainlabs/nitro/util/arbmath"
+	"github.com/offchainlabs/nitro/util/sqsclient"
 	"github.com/offchainlabs/nitro/util/testhelpers"
 	"github.com/offchainlabs/nitro/util/testhelpers/env"
 )
@@ -112,6 +112,151 @@ func buildPrecheckerFilterNodes(t *testing.T, ctx context.Context, withDelayedSe
 		cleanupA()
 	}
 	return builder, forwarder, cleanup
+}
+
+// syncForwarderToHead waits until the forwarder catches up to the sequencer's
+// current head, so prechecker dry-runs see the latest filter / contract state.
+func syncForwarderToHead(t *testing.T, ctx context.Context, builder *NodeBuilder, forwarder *TestClient) {
+	t.Helper()
+	seqLatest, err := builder.L2.Client.BlockNumber(ctx)
+	Require(t, err)
+	waitForForwarderSync(t, ctx, forwarder, seqLatest)
+}
+
+// buildForwarderRedeemTx builds a signed (un-sent) Redeem tx targeting the
+// forwarder's RPC, so the caller can both submit it and reference tx.Hash().
+func buildForwarderRedeemTx(
+	t *testing.T, ctx context.Context, builder *NodeBuilder, forwarder *TestClient,
+	account string, ticketId common.Hash, gasLimit uint64,
+) *types.Transaction {
+	t.Helper()
+	arbRetryable, err := precompilesgen.NewArbRetryableTx(types.ArbRetryableTxAddress, forwarder.Client)
+	Require(t, err)
+	auth := builder.L2Info.GetDefaultTransactOpts(account, ctx)
+	auth.GasLimit = gasLimit
+	auth.NoSend = true
+	tx, err := arbRetryable.Redeem(&auth, ticketId)
+	Require(t, err, "building redeem tx")
+	return tx
+}
+
+// precheckerSubmitRetryable creates a retryable ticket via the L1 delayed inbox,
+// advances L1, waits for the sequencer to process it, and verifies the ticket
+// exists. Returns the ticket ID (L2 submission tx hash).
+func precheckerSubmitRetryable(
+	t *testing.T, ctx context.Context, builder *NodeBuilder,
+	destAddr common.Address, calldata []byte, gasLimit *big.Int,
+) common.Hash {
+	t.Helper()
+	delayedInbox, err := bridgegen.NewInbox(builder.L1Info.GetAddress("Inbox"), builder.L1.Client)
+	require.NoError(t, err)
+
+	deposit := arbmath.BigMul(big.NewInt(1e12), big.NewInt(1e12))
+	maxSubmissionCost := big.NewInt(1e16)
+	maxFeePerGas := big.NewInt(l2pricing.InitialBaseFeeWei * 2)
+
+	l1opts := builder.L1Info.GetDefaultTransactOpts("Faucet", ctx)
+	l1opts.Value = deposit
+	l1tx, err := delayedInbox.CreateRetryableTicket(
+		&l1opts,
+		destAddr,
+		common.Big0,
+		maxSubmissionCost,
+		common.Address{},
+		common.Address{},
+		gasLimit,
+		maxFeePerGas,
+		calldata,
+	)
+	require.NoError(t, err)
+	l1Receipt, err := builder.L1.EnsureTxSucceeded(l1tx)
+	require.NoError(t, err)
+
+	ticketId := lookupSubmissionTxHash(t, ctx, builder, l1Receipt)
+
+	AdvanceL1(t, ctx, builder.L1.Client, builder.L1Info, 30)
+
+	_, err = WaitForTx(ctx, builder.L2.Client, ticketId, 30*time.Second)
+	require.NoError(t, err)
+
+	arbRetryable, err := precompilesgen.NewArbRetryableTx(types.ArbRetryableTxAddress, builder.L2.Client)
+	require.NoError(t, err)
+	_, err = arbRetryable.GetTimeout(&bind.CallOpts{}, ticketId)
+	require.NoError(t, err, "retryable ticket %s should exist", ticketId.Hex())
+
+	return ticketId
+}
+
+// lookupSubmissionTxHash finds the ArbitrumSubmitRetryableTx hash from an L1 receipt
+// by parsing the delayed message.
+func lookupSubmissionTxHash(t *testing.T, ctx context.Context, builder *NodeBuilder, l1Receipt *types.Receipt) common.Hash {
+	t.Helper()
+
+	delayedBridge, err := arbnode.NewDelayedBridge(builder.L1.Client, builder.L1Info.GetAddress("Bridge"), 0)
+	require.NoError(t, err)
+
+	messages, err := delayedBridge.LookupMessagesInRange(ctx, l1Receipt.BlockNumber, l1Receipt.BlockNumber, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, messages, "no delayed messages found")
+
+	for _, message := range messages {
+		if message.Message.Header.Kind != arbostypes.L1MessageType_SubmitRetryable {
+			continue
+		}
+		txs, err := arbos.ParseL2Transactions(message.Message, chaininfo.ArbitrumDevTestChainConfig().ChainID, params.MaxDebugArbosVersionSupported)
+		require.NoError(t, err)
+		for _, tx := range txs {
+			if tx.Type() == types.ArbitrumSubmitRetryableTxType {
+				return tx.Hash()
+			}
+		}
+	}
+	t.Fatal("no retryable submission tx found in delayed messages")
+	return common.Hash{}
+}
+
+// setupPrecheckerFilteringReport wires report stack + mock SQS forwarder + external endpoint; returns the URL prechecker reports to and the endpoint that receives the result.
+func setupPrecheckerFilteringReport(t *testing.T) (string, *forwarder.MockExternalEndpoint) {
+	t.Helper()
+	queueClient := &sqsclient.MockQueueClient{}
+	externalEndpoint := forwarder.NewMockExternalEndpoint(t)
+	stack := filteringreportapi.NewTestStack(t, queueClient)
+	fwd := forwarder.NewTestForwarder(t, queueClient, externalEndpoint.URL())
+	fwd.Start(t.Context())
+	t.Cleanup(func() { fwd.StopAndWait() })
+	return stack.HTTPEndpoint(), externalEndpoint
+}
+
+// requireFilteredAddress finds a record for addr and returns it.
+func requireFilteredAddress(t *testing.T, report *addressfilter.FilteredTxReport, addr common.Address) filter.FilteredAddressRecord {
+	t.Helper()
+	for _, rec := range report.FilteredAddresses {
+		if rec.Address == addr {
+			return rec
+		}
+	}
+	t.Fatalf("report should contain filtered address %s, got %+v", addr.Hex(), report.FilteredAddresses)
+	return filter.FilteredAddressRecord{}
+}
+
+// requireBaseReportFields asserts invariants common to every prechecker report.
+func requireBaseReportFields(t *testing.T, ctx context.Context, builder *NodeBuilder, report *addressfilter.FilteredTxReport, tx *types.Transaction) {
+	t.Helper()
+	require.Equal(t, tx.Hash(), report.TxHash, "txHash")
+	require.NotEmpty(t, report.ID, "report ID must be set")
+	require.NotEmpty(t, report.TxRLP, "txRLP must be set")
+	require.Equal(t, builder.chainConfig.ChainID.Uint64(), report.ChainID, "chainID")
+	require.False(t, report.IsDelayed, "prechecker must not flag tx as delayed")
+	require.Nil(t, report.DelayedReportData, "prechecker must not populate delayed payload")
+	require.Equal(t, uint64(0), report.PositionInBlock, "prechecker has no in-block position")
+	require.False(t, report.FilteredAt.IsZero(), "filteredAt must be populated")
+	require.WithinDuration(t, time.Now().UTC(), report.FilteredAt, 5*time.Minute, "filteredAt must be recent")
+
+	var decoded types.Transaction
+	Require(t, decoded.UnmarshalBinary(report.TxRLP), "txRLP should decode")
+	require.Equal(t, tx.Hash(), decoded.Hash(), "decoded txRLP hash should match")
+
+	CheckReportBlockNumberAndParentBlockHash(t, ctx, builder, report)
 }
 
 // TestPrecheckerFilterDirectAddress verifies that the forwarder's prechecker
@@ -286,24 +431,16 @@ func TestPrecheckerFilterManualRedeem(t *testing.T) {
 	ticketId := precheckerSubmitRetryable(t, ctx, builder, contractAddr, invalidCalldata, big.NewInt(100000))
 
 	// Wait for forwarder to sync to the sequencer's latest block
-	seqLatest, err := builder.L2.Client.BlockNumber(ctx)
-	require.NoError(t, err)
-	waitForForwarderSync(t, ctx, forwarder, seqLatest)
+	syncForwarderToHead(t, ctx, builder, forwarder)
 
 	// Set filter on forwarder's prechecker targeting the contract
 	filter := newHashedChecker([]common.Address{contractAddr})
 	forwarder.ExecNode.ExecEngine.SetAddressChecker(t, filter)
 
 	// Build redeem tx and send through forwarder -- prechecker should reject
-	arbRetryableOnForwarder, err := precompilesgen.NewArbRetryableTx(common.HexToAddress("6e"), forwarder.Client)
-	require.NoError(t, err)
-	auth := builder.L2Info.GetDefaultTransactOpts("Redeemer", ctx)
-	auth.GasLimit = 1_000_000
-	auth.NoSend = true
-	redeemTx, err := arbRetryableOnForwarder.Redeem(&auth, ticketId)
-	require.NoError(t, err, "building redeem tx should not error")
+	redeemTx := buildForwarderRedeemTx(t, ctx, builder, forwarder, "Redeemer", ticketId, 1_000_000)
 
-	err = forwarder.Client.SendTransaction(ctx, redeemTx)
+	err := forwarder.Client.SendTransaction(ctx, redeemTx)
 	if !isFilteredError(err) {
 		t.Fatalf("expected prechecker to reject manual redeem touching filtered address, got: %v", err)
 	}
@@ -335,9 +472,7 @@ func TestPrecheckerFilterContractTriggeredRedeem(t *testing.T) {
 	ticketId := precheckerSubmitRetryable(t, ctx, builder, destAddr, invalidCalldata, big.NewInt(100000))
 
 	// Wait for forwarder to sync to the sequencer's latest block
-	seqLatest, err := builder.L2.Client.BlockNumber(ctx)
-	require.NoError(t, err)
-	waitForForwarderSync(t, ctx, forwarder, seqLatest)
+	syncForwarderToHead(t, ctx, builder, forwarder)
 
 	// Set filter on forwarder's prechecker targeting contract A
 	filter := newHashedChecker([]common.Address{destAddr})
@@ -352,53 +487,6 @@ func TestPrecheckerFilterContractTriggeredRedeem(t *testing.T) {
 	if !isFilteredError(err) {
 		t.Fatalf("expected prechecker to reject contract-triggered redeem touching filtered address, got: %v", err)
 	}
-}
-
-// precheckerSubmitRetryable creates a retryable ticket via the L1 delayed inbox,
-// advances L1, waits for the sequencer to process it, and verifies the ticket
-// exists. Returns the ticket ID (L2 submission tx hash).
-func precheckerSubmitRetryable(
-	t *testing.T, ctx context.Context, builder *NodeBuilder,
-	destAddr common.Address, calldata []byte, gasLimit *big.Int,
-) common.Hash {
-	t.Helper()
-	delayedInbox, err := bridgegen.NewInbox(builder.L1Info.GetAddress("Inbox"), builder.L1.Client)
-	require.NoError(t, err)
-
-	deposit := arbmath.BigMul(big.NewInt(1e12), big.NewInt(1e12))
-	maxSubmissionCost := big.NewInt(1e16)
-	maxFeePerGas := big.NewInt(l2pricing.InitialBaseFeeWei * 2)
-
-	l1opts := builder.L1Info.GetDefaultTransactOpts("Faucet", ctx)
-	l1opts.Value = deposit
-	l1tx, err := delayedInbox.CreateRetryableTicket(
-		&l1opts,
-		destAddr,
-		common.Big0,
-		maxSubmissionCost,
-		common.Address{},
-		common.Address{},
-		gasLimit,
-		maxFeePerGas,
-		calldata,
-	)
-	require.NoError(t, err)
-	l1Receipt, err := builder.L1.EnsureTxSucceeded(l1tx)
-	require.NoError(t, err)
-
-	ticketId := lookupSubmissionTxHash(t, ctx, builder, l1Receipt)
-
-	AdvanceL1(t, ctx, builder.L1.Client, builder.L1Info, 30)
-
-	_, err = WaitForTx(ctx, builder.L2.Client, ticketId, 30*time.Second)
-	require.NoError(t, err)
-
-	arbRetryable, err := precompilesgen.NewArbRetryableTx(common.HexToAddress("6e"), builder.L2.Client)
-	require.NoError(t, err)
-	_, err = arbRetryable.GetTimeout(&bind.CallOpts{}, ticketId)
-	require.NoError(t, err, "retryable ticket %s should exist", ticketId.Hex())
-
-	return ticketId
 }
 
 // testPrecheckerFilterCascadingRedeem tests that the prechecker's FIFO redeem
@@ -425,7 +513,6 @@ func testPrecheckerFilterCascadingRedeem(t *testing.T, depth int) {
 	require.NoError(t, err)
 	arbRetryableABI, err := precompilesgen.ArbRetryableTxMetaData.GetAbi()
 	require.NoError(t, err)
-	arbRetryableTxAddr := common.HexToAddress("6e")
 
 	// Build retryable chain bottom-up.
 	// ticket[0] is the deepest: targets wrapper with callTarget(filteredTarget).
@@ -445,16 +532,14 @@ func testPrecheckerFilterCascadingRedeem(t *testing.T, depth int) {
 		redeemData, err := arbRetryableABI.Pack("redeem", ticketIds[i-1])
 		require.NoError(t, err)
 		ticketIds[i] = precheckerSubmitRetryable(
-			t, ctx, builder, arbRetryableTxAddr, redeemData, common.Big0,
+			t, ctx, builder, types.ArbRetryableTxAddress, redeemData, common.Big0,
 		)
 	}
 
 	topTicketId := ticketIds[depth-1]
 
 	// Sync forwarder to sequencer's latest block
-	seqLatest, err := builder.L2.Client.BlockNumber(ctx)
-	require.NoError(t, err)
-	waitForForwarderSync(t, ctx, forwarder, seqLatest)
+	syncForwarderToHead(t, ctx, builder, forwarder)
 
 	// Set filter on forwarder's prechecker targeting filteredTarget
 	filter := newHashedChecker([]common.Address{filteredTarget})
@@ -463,15 +548,7 @@ func testPrecheckerFilterCascadingRedeem(t *testing.T, depth int) {
 	// Manual redeem of the top ticket through forwarder — prechecker must
 	// execute the full cascade including the deepest redeem to discover the
 	// filtered address touched via wrapper.callTarget().
-	arbRetryableOnForwarder, err := precompilesgen.NewArbRetryableTx(
-		common.HexToAddress("6e"), forwarder.Client,
-	)
-	require.NoError(t, err)
-	auth := builder.L2Info.GetDefaultTransactOpts("Redeemer", ctx)
-	auth.GasLimit = 2_000_000
-	auth.NoSend = true
-	redeemTx, err := arbRetryableOnForwarder.Redeem(&auth, topTicketId)
-	require.NoError(t, err, "building redeem tx should not error")
+	redeemTx := buildForwarderRedeemTx(t, ctx, builder, forwarder, "Redeemer", topTicketId, 2_000_000)
 
 	err = forwarder.Client.SendTransaction(ctx, redeemTx)
 	if !isFilteredError(err) {
@@ -494,79 +571,14 @@ func TestPrecheckerFilterCascadingRedeemDepth4(t *testing.T) {
 	testPrecheckerFilterCascadingRedeem(t, 4)
 }
 
-// testReportCollector implements the filteringreport RPC namespace for testing.
-// Reports sent via FilteringReportRPCClient are captured in the Reports channel.
-type testReportCollector struct {
-	Reports chan []addressfilter.FilteredTxReport
-}
-
-func (c *testReportCollector) ReportFilteredTransactions(_ context.Context, reports []addressfilter.FilteredTxReport) error {
-	c.Reports <- reports
-	return nil
-}
-
-// startTestReportServer starts an HTTP-JSON-RPC server that captures
-// filteringreport_reportFilteredTransactions calls. Returns the server URL
-// and the collector. The server shuts down when ctx is cancelled.
-func startTestReportServer(t *testing.T, ctx context.Context) (string, *testReportCollector) {
-	t.Helper()
-	collector := &testReportCollector{
-		Reports: make(chan []addressfilter.FilteredTxReport, 16),
-	}
-	rpcServer := rpc.NewServer()
-	err := rpcServer.RegisterName(gethexec.FilteringReportNamespace, collector)
-	require.NoError(t, err)
-
-	listener, err := net.Listen("tcp", "localhost:0")
-	require.NoError(t, err)
-
-	httpServer := &http.Server{Handler: rpcServer, ReadHeaderTimeout: 5 * time.Second}
-	go httpServer.Serve(listener) //nolint:errcheck
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		httpServer.Shutdown(shutdownCtx) //nolint:errcheck
-	}()
-
-	return "http://" + listener.Addr().String(), collector
-}
-
-// lookupSubmissionTxHash finds the ArbitrumSubmitRetryableTx hash from an L1 receipt
-// by parsing the delayed message.
-func lookupSubmissionTxHash(t *testing.T, ctx context.Context, builder *NodeBuilder, l1Receipt *types.Receipt) common.Hash {
-	t.Helper()
-
-	delayedBridge, err := arbnode.NewDelayedBridge(builder.L1.Client, builder.L1Info.GetAddress("Bridge"), 0)
-	require.NoError(t, err)
-
-	messages, err := delayedBridge.LookupMessagesInRange(ctx, l1Receipt.BlockNumber, l1Receipt.BlockNumber, nil)
-	require.NoError(t, err)
-	require.NotEmpty(t, messages, "no delayed messages found")
-
-	for _, message := range messages {
-		if message.Message.Header.Kind != arbostypes.L1MessageType_SubmitRetryable {
-			continue
-		}
-		txs, err := arbos.ParseL2Transactions(message.Message, chaininfo.ArbitrumDevTestChainConfig().ChainID, params.MaxDebugArbosVersionSupported)
-		require.NoError(t, err)
-		for _, tx := range txs {
-			if tx.Type() == types.ArbitrumSubmitRetryableTxType {
-				return tx.Hash()
-			}
-		}
-	}
-	t.Fatal("no retryable submission tx found in delayed messages")
-	return common.Hash{}
-}
-
-// TestPrecheckerFilterReport verifies that the prechecker sends a
-// FilteredTxReport to the filtering-report service when a tx is filtered.
+// TestPrecheckerFilterReport (Scenario 1: preTxFilter from/to) verifies that
+// the prechecker sends a FilteredTxReport when a tx is filtered by its To
+// address before any execution.
 func TestPrecheckerFilterReport(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	reportURL, collector := startTestReportServer(t, ctx)
+	reportURL, externalEndpoint := setupPrecheckerFilteringReport(t)
 
 	builder, forwarder, cleanup := buildPrecheckerFilterNodes(t, ctx, false, reportURL)
 	defer cleanup()
@@ -580,67 +592,145 @@ func TestPrecheckerFilterReport(t *testing.T) {
 	filteredAddr := builder.L2Info.GetAddress("FilteredUser")
 	forwarder.ExecNode.ExecEngine.SetAddressChecker(t, newHashedChecker([]common.Address{filteredAddr}))
 
-	// Filtered tx should be rejected and generate a report
 	tx := builder.L2Info.PrepareTx("NormalUser", "FilteredUser", builder.L2Info.TransferGas, big.NewInt(1e12), nil)
 	err := forwarder.Client.SendTransaction(ctx, tx)
-	require.True(t, isFilteredError(err), "expected filtered error, got: %v", err)
-
-	select {
-	case reports := <-collector.Reports:
-		require.Len(t, reports, 1)
-		report := reports[0]
-		require.Equal(t, tx.Hash(), report.TxHash)
-		require.NotEmpty(t, report.ID)
-		require.NotEmpty(t, report.TxRLP)
-		require.NotZero(t, report.BlockNumber)
-		require.False(t, report.IsDelayed)
-		require.False(t, report.FilteredAt.IsZero())
-
-		var found bool
-		for _, rec := range report.FilteredAddresses {
-			if rec.Address == filteredAddr {
-				found = true
-				require.Equal(t, filter.ReasonTo, rec.Reason)
-				break
-			}
-		}
-		require.True(t, found, "report should contain filtered address %s", filteredAddr.Hex())
-	case <-time.After(10 * time.Second):
-		t.Fatal("timed out waiting for filtered tx report")
+	if !isFilteredError(err) {
+		t.Fatalf("expected filtered error, got: %v", err)
 	}
+
+	report := externalEndpoint.NextReport(t)
+	requireBaseReportFields(t, ctx, builder, report, tx)
+	rec := requireFilteredAddress(t, report, filteredAddr)
+	require.Equal(t, filter.ReasonTo, rec.Reason)
+	require.Nil(t, rec.EventRuleMatch, "preTxFilter must not carry event-rule payload")
 }
 
-// TestPrecheckerFilterNoReportWhenClean verifies that no FilteredTxReport is
-// sent to the filtering-report service when a tx is not filtered.
-func TestPrecheckerFilterNoReportWhenClean(t *testing.T) {
+// TestPrecheckerFilterReportEventTriggered: postTxFilter via EventFilter rule on emitted log topic.
+func TestPrecheckerFilterReportEventTriggered(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	reportURL, collector := startTestReportServer(t, ctx)
+	selector, _, err := eventfilter.CanonicalSelectorFromEvent("Transfer(address,address,uint256)")
+	Require(t, err)
+	rules := []eventfilter.EventRule{{
+		Event:          "Transfer(address,address,uint256)",
+		Selector:       selector,
+		TopicAddresses: []int{1, 2},
+	}}
 
+	reportURL, externalEndpoint := setupPrecheckerFilteringReport(t)
+	builder, forwarder, cleanup := buildPrecheckerFilterNodes(t, ctx, false, reportURL, rules...)
+	defer cleanup()
+
+	auth := builder.L2Info.GetDefaultTransactOpts("Owner", ctx)
+	contractAddr, deployTx, _, err := localgen.DeployAddressFilterTest(&auth, builder.L2.Client)
+	Require(t, err)
+	deployReceipt, err := builder.L2.EnsureTxSucceeded(deployTx)
+	Require(t, err)
+	waitForForwarderSync(t, ctx, forwarder, deployReceipt.BlockNumber.Uint64())
+
+	contractOnForwarder, err := localgen.NewAddressFilterTest(contractAddr, forwarder.Client)
+	Require(t, err)
+
+	builder.L2Info.GenerateAccount("FilteredAddr")
+	filteredAddr := builder.L2Info.GetAddress("FilteredAddr")
+	forwarder.ExecNode.ExecEngine.SetAddressChecker(t, newHashedChecker([]common.Address{filteredAddr}))
+
+	auth = builder.L2Info.GetDefaultTransactOpts("Owner", ctx)
+	auth.GasLimit = 500_000 // skip EstimateGas, which would surface the filter via the forwarder's prechecker before we get a tx to assert against
+	auth.NoSend = true
+	tx, err := contractOnForwarder.EmitTransfer(&auth, auth.From, filteredAddr)
+	Require(t, err, "building EmitTransfer tx")
+	err = forwarder.Client.SendTransaction(ctx, tx)
+	if !isFilteredError(err) {
+		t.Fatalf("expected event-rule filtered error, got: %v", err)
+	}
+
+	report := externalEndpoint.NextReport(t)
+	requireBaseReportFields(t, ctx, builder, report, tx)
+	rec := requireFilteredAddress(t, report, filteredAddr)
+	require.Equal(t, filter.ReasonEventRule, rec.Reason)
+	require.NotNil(t, rec.EventRuleMatch, "event-rule reason must carry EventRuleMatch")
+	require.Equal(t, "Transfer(address,address,uint256)", rec.EventRuleMatch.MatchedEvent)
+	require.Equal(t, 2, rec.EventRuleMatch.MatchedTopicIndex, "filteredAddr is the `to` arg, indexed at topic[2]")
+	require.NotNil(t, rec.EventRuleMatch.RawLog, "event-rule reason must carry raw log")
+	require.Equal(t, contractAddr, rec.EventRuleMatch.RawLog.Address, "event must originate from emitter contract")
+	require.NotEmpty(t, rec.EventRuleMatch.RawLog.Topics, "raw log topics must be set")
+	require.Equal(t, selector[:], rec.EventRuleMatch.RawLog.Topics[0].Bytes()[:len(selector)], "topic[0] must be the event selector")
+}
+
+// TestPrecheckerFilterReportContractCall: postTxFilter via PushContract on inner CALL, no EventFilter.
+func TestPrecheckerFilterReportContractCall(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	reportURL, externalEndpoint := setupPrecheckerFilteringReport(t)
 	builder, forwarder, cleanup := buildPrecheckerFilterNodes(t, ctx, false, reportURL)
 	defer cleanup()
 
-	builder.L2Info.GenerateAccount("FilteredUser")
-	builder.L2Info.GenerateAccount("NormalUser")
-	builder.L2.TransferBalance(t, "Owner", "NormalUser", big.NewInt(1e18), builder.L2Info)
-	builder.L2Info.GenerateAccount("AnotherUser")
-	_, fundReceipt := builder.L2.TransferBalance(t, "Owner", "AnotherUser", big.NewInt(1e18), builder.L2Info)
-	waitForForwarderSync(t, ctx, forwarder, fundReceipt.BlockNumber.Uint64())
+	wrapperAddr, _ := deployAddressFilterTestContract(t, ctx, builder)
+	filteredTargetAddr, _ := deployAddressFilterTestContract(t, ctx, builder)
 
-	filteredAddr := builder.L2Info.GetAddress("FilteredUser")
-	forwarder.ExecNode.ExecEngine.SetAddressChecker(t, newHashedChecker([]common.Address{filteredAddr}))
+	syncForwarderToHead(t, ctx, builder, forwarder)
 
-	// Clean tx between non-filtered addresses should forward and succeed
-	tx := builder.L2Info.PrepareTx("NormalUser", "AnotherUser", builder.L2Info.TransferGas, big.NewInt(1e12), nil)
-	err := forwarder.Client.SendTransaction(ctx, tx)
+	forwarder.ExecNode.ExecEngine.SetAddressChecker(t, newHashedChecker([]common.Address{filteredTargetAddr}))
+
+	wrapperOnForwarder, err := localgen.NewAddressFilterTest(wrapperAddr, forwarder.Client)
 	Require(t, err)
-	_, err = builder.L2.EnsureTxSucceeded(tx)
-	Require(t, err)
-
-	select {
-	case reports := <-collector.Reports:
-		t.Fatalf("unexpected filtered tx report for clean tx: %+v", reports)
-	case <-time.After(2 * time.Second):
+	auth := builder.L2Info.GetDefaultTransactOpts("Owner", ctx)
+	auth.GasLimit = 500_000 // skip EstimateGas, which would surface the filter via the forwarder's prechecker before we get a tx to assert against
+	auth.NoSend = true
+	tx, err := wrapperOnForwarder.CallTarget(&auth, filteredTargetAddr)
+	Require(t, err, "building CallTarget tx")
+	err = forwarder.Client.SendTransaction(ctx, tx)
+	if !isFilteredError(err) {
+		t.Fatalf("expected post-execution filtered error, got: %v", err)
 	}
+
+	report := externalEndpoint.NextReport(t)
+	requireBaseReportFields(t, ctx, builder, report, tx)
+	rec := requireFilteredAddress(t, report, filteredTargetAddr)
+	require.Equal(t, filter.ReasonContractAddress, rec.Reason, "filtered contract should be flagged via PushContract bookkeeping")
+	require.Nil(t, rec.EventRuleMatch, "contract-address reason must not carry EventRuleMatch")
+}
+
+// TestPrecheckerFilterReportRedeem: scheduled retryable redeem; filtered contract surfaces via RunScheduledTxes.
+func TestPrecheckerFilterReportRedeem(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	reportURL, externalEndpoint := setupPrecheckerFilteringReport(t)
+	builder, forwarder, cleanup := buildPrecheckerFilterNodes(t, ctx, true, reportURL)
+	defer cleanup()
+
+	contractAddr, _ := deployAddressFilterTestContract(t, ctx, builder)
+
+	builder.L2Info.GenerateAccount("Redeemer")
+	builder.L2.TransferBalance(t, "Owner", "Redeemer", big.NewInt(1e18), builder.L2Info)
+
+	invalidCalldata := []byte{0xde, 0xad, 0xbe, 0xef}
+	ticketId := precheckerSubmitRetryable(t, ctx, builder, contractAddr, invalidCalldata, big.NewInt(100000))
+
+	syncForwarderToHead(t, ctx, builder, forwarder)
+
+	forwarder.ExecNode.ExecEngine.SetAddressChecker(t, newHashedChecker([]common.Address{contractAddr}))
+
+	redeemTx := buildForwarderRedeemTx(t, ctx, builder, forwarder, "Redeemer", ticketId, 1_000_000)
+
+	err := forwarder.Client.SendTransaction(ctx, redeemTx)
+	if !isFilteredError(err) {
+		t.Fatalf("expected redeem prechecker rejection, got: %v", err)
+	}
+
+	report := externalEndpoint.NextReport(t)
+	requireBaseReportFields(t, ctx, builder, report, redeemTx)
+	rec := requireFilteredAddress(t, report, contractAddr)
+	// Outer tx targets ArbRetryableTx, not contractAddr — contractAddr can only surface via the
+	// scheduled inner retry, where it appears as either the inner tx's To or as a pushed contract
+	// frame. Async workers determine which lands in the report first.
+	require.Contains(t,
+		[]filter.FilterReasonType{filter.ReasonTo, filter.ReasonContractAddress, filter.ReasonRetryableTo},
+		rec.Reason,
+		"scheduled redeem must surface filtered contract via the cascade path")
+	require.Nil(t, rec.EventRuleMatch)
 }

@@ -355,6 +355,7 @@ func (c *TxPreChecker) reportFilteredTx(tx *types.Transaction, header *types.Hea
 		TxHash:            txHash,
 		TxRLP:             txRLP,
 		FilteredAddresses: filteredAddresses,
+		ChainID:           c.bc.Config().ChainID.Uint64(),
 		BlockNumber:       header.Number.Uint64(),
 		ParentBlockHash:   header.ParentHash,
 		PositionInBlock:   0,
