@@ -504,9 +504,11 @@ func mainImpl() int {
 		return 1
 	}
 
-	if l2BlockChain.Config().ArbitrumChainParams.DataAvailabilityCommittee != nodeConfig.Node.DataAvailability.Enable {
+	// ApeChain: the on-chain genesis has DataAvailabilityCommittee=false but the chain
+	// actually uses DAS. Override the vanilla mismatch check and require DAS always on.
+	if !nodeConfig.Node.DataAvailability.Enable {
 		pflag.Usage()
-		log.Error(fmt.Sprintf("data availability service usage for this chain is set to %v but --node.data-availability.enable is set to %v", l2BlockChain.Config().ArbitrumChainParams.DataAvailabilityCommittee, nodeConfig.Node.DataAvailability.Enable))
+		log.Error(fmt.Sprintf("data availability service usage is required for this chain but --node.data-availability.enable is set to %v", nodeConfig.Node.DataAvailability.Enable))
 		return 1
 	}
 

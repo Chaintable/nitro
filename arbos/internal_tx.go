@@ -100,6 +100,11 @@ func ApplyInternalTxUpdate(tx *types.ArbitrumInternalTx, state *arbosState.Arbos
 
 		currentTime := evm.Context.Time
 
+		// ApeChain: update share price hook (no-op when APY is zero, but needed for genesis sync)
+		if currentTime > 0 {
+			state.Restrict(state.UpdateSharePrice(currentTime))
+		}
+
 		// Try to reap 2 retryables
 		_ = state.RetryableState().TryToReapOneRetryable(currentTime, evm, util.TracingDuringEVM)
 		_ = state.RetryableState().TryToReapOneRetryable(currentTime, evm, util.TracingDuringEVM)

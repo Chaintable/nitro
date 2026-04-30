@@ -63,6 +63,11 @@ type ArbosState struct {
 	infraFeeAccount        storage.StorageBackedAddress
 	brotliCompressionLevel storage.StorageBackedUint64 // brotli compression level used for pricing
 	nativeTokenEnabledTime storage.StorageBackedUint64
+	sharePrice             storage.StorageBackedUint64  // ApeChain: frozen share price
+	shareCount             storage.StorageBackedBigInt  // ApeChain: total share count
+	apy                    storage.StorageBackedUint64  // ApeChain: APY (permanently zero)
+	baseSharePrice         storage.StorageBackedUint64  // ApeChain: base share price for yield calculation
+	baseShareTime          storage.StorageBackedUint64  // ApeChain: timestamp of last share price base
 	backingStorage         *storage.Storage
 	Burner                 burn.Burner
 }
@@ -100,6 +105,11 @@ func OpenArbosState(stateDB vm.StateDB, burner burn.Burner) (*ArbosState, error)
 		infraFeeAccount:        backingStorage.OpenStorageBackedAddress(uint64(infraFeeAccountOffset)),
 		brotliCompressionLevel: backingStorage.OpenStorageBackedUint64(uint64(brotliCompressionLevelOffset)),
 		nativeTokenEnabledTime: backingStorage.OpenStorageBackedUint64(uint64(nativeTokenEnabledFromTimeOffset)),
+		sharePrice:             backingStorage.OpenStorageBackedUint64(uint64(sharePriceSlot)),
+		shareCount:             backingStorage.OpenStorageBackedBigInt(uint64(shareCountSlot)),
+		apy:                    backingStorage.OpenStorageBackedUint64(uint64(apySlot)),
+		baseSharePrice:         backingStorage.OpenStorageBackedUint64(uint64(baseSharePriceSlot)),
+		baseShareTime:          backingStorage.OpenStorageBackedUint64(uint64(baseShareTimeSlot)),
 		backingStorage:         backingStorage,
 		Burner:                 burner,
 	}, nil
@@ -171,6 +181,13 @@ const (
 	infraFeeAccountOffset
 	brotliCompressionLevelOffset
 	nativeTokenEnabledFromTimeOffset
+
+	// ApeChain: yield state slots (hardcoded positions matching production)
+	sharePriceSlot     Offset = 50
+	shareCountSlot     Offset = 51
+	apySlot            Offset = 52
+	baseSharePriceSlot Offset = 53
+	baseShareTimeSlot  Offset = 54
 )
 
 type SubspaceID []byte
@@ -271,6 +288,12 @@ func InitializeArbosState(stateDB vm.StateDB, burner burn.Burner, chainConfig *p
 	if err != nil {
 		return nil, err
 	}
+	// ApeChain: initialize yield state slots with production defaults
+	_ = sto.SetUint64ByUint64(uint64(sharePriceSlot), 1e9)
+	_ = sto.SetUint64ByUint64(uint64(shareCountSlot), 0)
+	_ = sto.SetUint64ByUint64(uint64(apySlot), 10e9)
+	_ = sto.SetUint64ByUint64(uint64(baseSharePriceSlot), 1e9)
+	_ = sto.SetUint64ByUint64(uint64(baseShareTimeSlot), 0)
 
 	initialRewardsRecipient := l1pricing.BatchPosterAddress
 	if desiredArbosVersion >= params.ArbosVersion_2 {
@@ -532,6 +555,110 @@ func (state *ArbosState) SetBrotliCompressionLevel(val uint64) error {
 		return state.brotliCompressionLevel.Set(val)
 	}
 	return errors.New("invalid brotli compression level")
+}
+
+// ApeChain: yield state accessors (read-only, yield is permanently frozen)
+
+func (state *ArbosState) SharePrice() (uint64, error) {
+	return state.sharePrice.Get()
+}
+
+func (state *ArbosState) ShareCount() (*big.Int, error) {
+	return state.shareCount.Get()
+}
+
+func (state *ArbosState) Apy() (uint64, error) {
+	return state.apy.Get()
+}
+
+var MaxApy = uint64(1e12)
+
+func (state *ArbosState) SetSharePrice(price uint64, time uint64) error {
+	curPrice, err := state.sharePrice.Get()
+	if err != nil {
+		return err
+	}
+	if price < curPrice {
+		return errors.New("cannot lower share price")
+	}
+	if price/curPrice > 10 {
+		return errors.New("cannot increase share price by >10x the current price")
+	}
+	if err := state.baseShareTime.Set(time); err != nil {
+		return err
+	}
+	if err := state.baseSharePrice.Set(price); err != nil {
+		return err
+	}
+	if err := state.sharePrice.Set(price); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (state *ArbosState) SetApy(apy uint64, time uint64) error {
+	if apy > MaxApy {
+		return errors.New("apy out of range")
+	}
+	baseTime, err := state.baseShareTime.Get()
+	if err != nil {
+		return err
+	}
+	if time < baseTime {
+		return errors.New("time less than base time")
+	}
+	price, err := state.sharePrice.Get()
+	if err != nil {
+		return err
+	}
+	if err := state.baseShareTime.Set(time); err != nil {
+		return err
+	}
+	if err := state.baseSharePrice.Set(price); err != nil {
+		return err
+	}
+	if err := state.apy.Set(apy); err != nil {
+		return err
+	}
+	return nil
+}
+
+var secondsPerYear = 365.25 * 24 * 3600
+
+func (state *ArbosState) UpdateSharePrice(time uint64) error {
+	if time == 0 {
+		return errors.New("time should not be 0")
+	}
+	baseTime, err := state.baseShareTime.Get()
+	if err != nil {
+		return err
+	}
+	if baseTime == 0 {
+		return state.baseShareTime.Set(time)
+	}
+	if time <= baseTime {
+		return nil
+	}
+	apy, err := state.apy.Get()
+	if err != nil {
+		return err
+	}
+	if apy == 0 {
+		return nil
+	}
+	basePrice, err := state.baseSharePrice.Get()
+	if err != nil {
+		return err
+	}
+	curPrice, err := state.sharePrice.Get()
+	if err != nil {
+		return err
+	}
+	newPrice := uint64(float64(basePrice) * math.Pow(float64(apy)/1e11+1.0, float64(time-baseTime)/secondsPerYear))
+	if newPrice > curPrice {
+		return state.sharePrice.Set(newPrice)
+	}
+	return nil
 }
 
 func (state *ArbosState) RetryableState() *retryables.RetryableState {

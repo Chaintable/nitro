@@ -496,3 +496,13 @@ func (con ArbOwner) SetGasPricingConstraints(c ctx, evm mech, constraints [][3]u
 func (con ArbOwner) SetWasmActivationGas(c ctx, _ mech, gas uint64) error {
 	return c.State.Programs().SetActivationGas(gas)
 }
+
+// ApeChain: yield owner methods (yield is permanently frozen, but needed for genesis sync)
+
+func (con ArbOwner) SetSharePrice(c ctx, evm mech, sharePrice uint64) error {
+	return c.State.SetSharePrice(sharePrice, evm.Context.Time)
+}
+
+func (con ArbOwner) SetApy(c ctx, evm mech, apy uint64) error {
+	return c.State.SetApy(apy, evm.Context.Time)
+}

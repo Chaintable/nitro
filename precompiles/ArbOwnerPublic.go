@@ -93,3 +93,19 @@ func (con ArbOwnerPublic) IsCalldataPriceIncreaseEnabled(c ctx, _ mech) (bool, e
 func (con ArbOwnerPublic) GetParentGasFloorPerToken(c ctx, evm mech) (uint64, error) {
 	return c.State.L1PricingState().ParentGasFloorPerToken()
 }
+
+// ApeChain: yield is permanently frozen. These precompiles exist because
+// on-chain contracts call them. Share price is hardcoded to the frozen value,
+// share count is read from ArbOS state, APY is always zero.
+
+func (con ArbOwnerPublic) GetSharePrice(c ctx, evm mech) (uint64, error) {
+	return c.State.SharePrice()
+}
+
+func (con ArbOwnerPublic) GetShareCount(c ctx, evm mech) (huge, error) {
+	return c.State.ShareCount()
+}
+
+func (con ArbOwnerPublic) GetApy(c ctx, evm mech) (uint64, error) {
+	return c.State.Apy()
+}
