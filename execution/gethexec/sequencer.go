@@ -506,6 +506,7 @@ func (s *Sequencer) buildFilteredTxReport(tx *types.Transaction, header *types.H
 		TxHash:            tx.Hash(),
 		TxRLP:             txRLP,
 		FilteredAddresses: filteredAddresses,
+		ChainID:           s.execEngine.bc.Config().ChainID.Uint64(),
 		BlockNumber:       header.Number.Uint64(),
 		ParentBlockHash:   header.ParentHash,
 		PositionInBlock:   uint64(positionInBlock), // #nosec G115

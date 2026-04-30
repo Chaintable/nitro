@@ -7,7 +7,6 @@ import (
 	"context"
 	"math/big"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -15,13 +14,10 @@ import (
 
 	"github.com/ethereum/go-ethereum/arbitrum/filter"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/node"
-	"github.com/ethereum/go-ethereum/p2p"
-	"github.com/ethereum/go-ethereum/rpc"
 
 	"github.com/offchainlabs/nitro/execution"
-	"github.com/offchainlabs/nitro/execution/gethexec"
 	"github.com/offchainlabs/nitro/execution/gethexec/addressfilter"
 	"github.com/offchainlabs/nitro/execution/gethexec/eventfilter"
 	"github.com/offchainlabs/nitro/solgen/go/localgen"
@@ -53,104 +49,31 @@ func newHashedChecker(addrs []common.Address) *addressfilter.HashedAddressChecke
 	return checker
 }
 
-// capturingFilteringReportAPI is a test RPC service that captures reports
-// sent via the filteringreport_reportFilteredTransactions RPC method.
-type capturingFilteringReportAPI struct {
-	mu      sync.Mutex
-	reports []addressfilter.FilteredTxReport
-}
-
-func (a *capturingFilteringReportAPI) ReportFilteredTransactions(_ context.Context, reports []addressfilter.FilteredTxReport) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.reports = append(a.reports, reports...)
-	return nil
-}
-
-func (a *capturingFilteringReportAPI) getReports() []addressfilter.FilteredTxReport {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	result := make([]addressfilter.FilteredTxReport, len(a.reports))
-	copy(result, a.reports)
-	return result
-}
-
-func waitForReport(t *testing.T, capturer *capturingFilteringReportAPI, txHash common.Hash) *addressfilter.FilteredTxReport {
+// assertReportTxRLPMatches decodes report.TxRLP and asserts it parses to a
+// transaction whose hash matches report.TxHash.
+func assertReportTxRLPMatches(t *testing.T, report *addressfilter.FilteredTxReport) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		for _, r := range capturer.getReports() {
-			if r.TxHash == txHash {
-				return &r
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
+	var decoded types.Transaction
+	if err := decoded.UnmarshalBinary(report.TxRLP); err != nil {
+		t.Fatalf("report.TxRLP is not a valid transaction: %v", err)
 	}
-	t.Fatalf("timed out waiting for report for tx %s", txHash.Hex())
-	return nil
-}
-
-// waitForNewReport polls the capturer until a report beyond prevCount appears and returns it.
-// Use this when the tx object is nil (e.g. contract binding returned nil on RPC error).
-func waitForNewReport(t *testing.T, capturer *capturingFilteringReportAPI, prevCount int) *addressfilter.FilteredTxReport {
-	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		reports := capturer.getReports()
-		if len(reports) > prevCount {
-			return &reports[len(reports)-1]
-		}
-		time.Sleep(100 * time.Millisecond)
+	if decoded.Hash() != report.TxHash {
+		t.Fatalf("decoded tx hash %s != report.TxHash %s", decoded.Hash().Hex(), report.TxHash.Hex())
 	}
-	t.Fatal("timed out waiting for new report")
-	return nil
-}
-
-func newCapturingReportStack(t *testing.T) (*node.Node, *capturingFilteringReportAPI) {
-	t.Helper()
-	stackConfig := node.Config{
-		DataDir:             "",
-		HTTPPort:            0,
-		HTTPHost:            "127.0.0.1",
-		HTTPModules:         []string{gethexec.FilteringReportNamespace},
-		HTTPVirtualHosts:    []string{"localhost"},
-		HTTPTimeouts:        rpc.DefaultHTTPTimeouts,
-		WSHost:              "127.0.0.1",
-		WSPort:              0,
-		WSModules:           []string{gethexec.FilteringReportNamespace},
-		GraphQLVirtualHosts: []string{"localhost"},
-		P2P:                 p2p.Config{ListenAddr: "", NoDiscovery: true, NoDial: true},
-	}
-	stack, err := node.New(&stackConfig)
-	if err != nil {
-		t.Fatal(err)
-	}
-	capturer := &capturingFilteringReportAPI{}
-	stack.RegisterAPIs([]rpc.API{{
-		Namespace: gethexec.FilteringReportNamespace,
-		Version:   "1.0",
-		Service:   capturer,
-		Public:    true,
-	}})
-	if err := stack.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { stack.Close() })
-	return stack, capturer
 }
 
 func TestAddressFilterDirectTransfer(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Start in-process filtering-report RPC server that captures reports
-	reportStack, capturer := newCapturingReportStack(t)
-
 	builder := NewNodeBuilder(ctx).DefaultConfig(t, false)
 	builder.isSequencer = true
-	builder.execConfig.TransactionFiltering.FilteringReportRPCClient.URL = reportStack.HTTPEndpoint()
+	endpoint := SetupFilteringReport(t, builder)
 	cleanup := builder.Build(t)
 	defer cleanup()
+
+	chainID, err := builder.L2.Client.ChainID(ctx)
+	Require(t, err)
 
 	testStartTime := time.Now()
 
@@ -169,16 +92,16 @@ func TestAddressFilterDirectTransfer(t *testing.T) {
 
 	// Test 1: Transaction TO a filtered address should fail and produce a report
 	tx := builder.L2Info.PrepareTx("NormalUser", "FilteredUser", builder.L2Info.TransferGas, big.NewInt(1e12), nil)
-	err := builder.L2.Client.SendTransaction(ctx, tx)
+	err = builder.L2.Client.SendTransaction(ctx, tx)
 	if err == nil {
 		t.Fatal("expected transaction to filtered address to be rejected")
 	}
 	if !isFilteredError(err) {
 		t.Fatalf("expected filtered error, got: %v", err)
 	}
-	report := waitForReport(t, capturer, tx.Hash())
-	if report == nil {
-		t.Fatal("expected report to not be nil")
+	report := endpoint.NextReport(t)
+	if report.TxHash != tx.Hash() {
+		t.Fatalf("report TxHash %s != tx hash %s", report.TxHash.Hex(), tx.Hash().Hex())
 	}
 	if report.ID == "" {
 		t.Fatal("report ID should not be empty")
@@ -186,21 +109,17 @@ func TestAddressFilterDirectTransfer(t *testing.T) {
 	if len(report.TxRLP) == 0 {
 		t.Fatal("report TxRLP should not be empty")
 	}
+	assertReportTxRLPMatches(t, report)
+	if report.ChainID != chainID.Uint64() {
+		t.Fatalf("report ChainID %d != expected %d", report.ChainID, chainID.Uint64())
+	}
 	if report.IsDelayed {
 		t.Fatal("report should not be marked as delayed")
 	}
 	if report.FilteredAt.Before(testStartTime) {
 		t.Fatalf("report FilteredAt %v is before test start %v", report.FilteredAt, testStartTime)
 	}
-	if report.BlockNumber == 0 {
-		t.Fatal("report BlockNumber should be non-zero")
-	}
-	parentHeader, err := builder.L2.Client.HeaderByNumber(ctx, new(big.Int).SetUint64(report.BlockNumber-1))
-	Require(t, err)
-	if report.ParentBlockHash != parentHeader.Hash() {
-		t.Fatalf("report ParentBlockHash %s != hash of block %d: %s",
-			report.ParentBlockHash.Hex(), report.BlockNumber-1, parentHeader.Hash().Hex())
-	}
+	CheckReportBlockNumberAndParentBlockHash(t, ctx, builder, report)
 	foundToReason := false
 	for _, fa := range report.FilteredAddresses {
 		if fa.Address == filteredAddr {
@@ -229,12 +148,19 @@ func TestAddressFilterDirectTransfer(t *testing.T) {
 	if !isFilteredError(err) {
 		t.Fatalf("expected filtered error, got: %v", err)
 	}
-	report2 := waitForReport(t, capturer, tx.Hash())
+	report2 := endpoint.NextReport(t)
+	if report2.TxHash != tx.Hash() {
+		t.Fatalf("report2 TxHash %s != tx hash %s", report2.TxHash.Hex(), tx.Hash().Hex())
+	}
 	if report2.ID == "" {
 		t.Fatal("report2 ID should not be empty")
 	}
 	if len(report2.TxRLP) == 0 {
 		t.Fatal("report2 TxRLP should not be empty")
+	}
+	assertReportTxRLPMatches(t, report2)
+	if report2.ChainID != chainID.Uint64() {
+		t.Fatalf("report2 ChainID %d != expected %d", report2.ChainID, chainID.Uint64())
 	}
 	if report2.IsDelayed {
 		t.Fatal("report2 should not be marked as delayed")
@@ -242,15 +168,7 @@ func TestAddressFilterDirectTransfer(t *testing.T) {
 	if report2.FilteredAt.Before(testStartTime) {
 		t.Fatalf("report2 FilteredAt %v is before test start %v", report2.FilteredAt, testStartTime)
 	}
-	if report2.BlockNumber == 0 {
-		t.Fatal("report2 BlockNumber should be non-zero")
-	}
-	parentHeader2, err := builder.L2.Client.HeaderByNumber(ctx, new(big.Int).SetUint64(report2.BlockNumber-1))
-	Require(t, err)
-	if report2.ParentBlockHash != parentHeader2.Hash() {
-		t.Fatalf("report2 ParentBlockHash %s != hash of block %d: %s",
-			report2.ParentBlockHash.Hex(), report2.BlockNumber-1, parentHeader2.Hash().Hex())
-	}
+	CheckReportBlockNumberAndParentBlockHash(t, ctx, builder, report2)
 	foundFromReason := false
 	for _, fa := range report2.FilteredAddresses {
 		if fa.Address == filteredAddr {
@@ -271,7 +189,6 @@ func TestAddressFilterDirectTransfer(t *testing.T) {
 	builder.L2Info.GetInfoWithPrivKey("FilteredUser").Nonce.Store(0)
 
 	// Test 3: Transaction between non-filtered addresses should succeed with no report
-	reportCountBefore := len(capturer.getReports())
 	builder.L2Info.GenerateAccount("AnotherUser")
 	builder.L2.TransferBalance(t, "Owner", "AnotherUser", big.NewInt(1e18), builder.L2Info)
 	tx = builder.L2Info.PrepareTx("NormalUser", "AnotherUser", builder.L2Info.TransferGas, big.NewInt(1e12), nil)
@@ -280,11 +197,7 @@ func TestAddressFilterDirectTransfer(t *testing.T) {
 	_, err = builder.L2.EnsureTxSucceeded(tx)
 	Require(t, err)
 
-	// Give async dispatch time to arrive (if it were to fire spuriously)
-	time.Sleep(500 * time.Millisecond)
-	if len(capturer.getReports()) != reportCountBefore {
-		t.Fatalf("expected no new reports for clean transaction, got %d new", len(capturer.getReports())-reportCountBefore)
-	}
+	endpoint.AssertNoReport(t, 500*time.Millisecond)
 }
 
 func TestAddressFilterEventRuleReport(t *testing.T) {
@@ -301,14 +214,14 @@ func TestAddressFilterEventRuleReport(t *testing.T) {
 		TopicAddresses: []int{1, 2},
 	}}
 
-	// Start in-process filtering-report RPC server that captures reports
-	reportStack, capturer := newCapturingReportStack(t)
-
 	builder := NewNodeBuilder(ctx).DefaultConfig(t, false).WithEventFilterRules(rules)
 	builder.isSequencer = true
-	builder.execConfig.TransactionFiltering.FilteringReportRPCClient.URL = reportStack.HTTPEndpoint()
+	endpoint := SetupFilteringReport(t, builder)
 	cleanup := builder.Build(t)
 	defer cleanup()
+
+	chainID, err := builder.L2.Client.ChainID(ctx)
+	Require(t, err)
 
 	testStartTime := time.Now()
 
@@ -323,7 +236,6 @@ func TestAddressFilterEventRuleReport(t *testing.T) {
 
 	// Emit Transfer event with filtered address as recipient (topic[2])
 	// This triggers postTxFilter via the event filter path
-	reportCountBefore := len(capturer.getReports())
 	auth := builder.L2Info.GetDefaultTransactOpts("Owner", ctx)
 	_, err = contract.EmitTransfer(&auth, auth.From, filteredAddr)
 	if err == nil {
@@ -333,16 +245,16 @@ func TestAddressFilterEventRuleReport(t *testing.T) {
 		t.Fatalf("expected filtered error, got: %v", err)
 	}
 
-	// contract.EmitTransfer returns nil tx on RPC error, so match by count
-	report := waitForNewReport(t, capturer, reportCountBefore)
-	if report == nil {
-		t.Fatal("expected report to not be nil")
-	}
+	report := endpoint.NextReport(t)
 	if report.ID == "" {
 		t.Fatal("report ID should not be empty")
 	}
 	if len(report.TxRLP) == 0 {
 		t.Fatal("report TxRLP should not be empty")
+	}
+	assertReportTxRLPMatches(t, report)
+	if report.ChainID != chainID.Uint64() {
+		t.Fatalf("report ChainID %d != expected %d", report.ChainID, chainID.Uint64())
 	}
 	if report.IsDelayed {
 		t.Fatal("report should not be marked as delayed")
@@ -350,15 +262,7 @@ func TestAddressFilterEventRuleReport(t *testing.T) {
 	if report.FilteredAt.Before(testStartTime) {
 		t.Fatalf("report FilteredAt %v is before test start %v", report.FilteredAt, testStartTime)
 	}
-	if report.BlockNumber == 0 {
-		t.Fatal("report BlockNumber should be non-zero")
-	}
-	parentHeader, err := builder.L2.Client.HeaderByNumber(ctx, new(big.Int).SetUint64(report.BlockNumber-1))
-	Require(t, err)
-	if report.ParentBlockHash != parentHeader.Hash() {
-		t.Fatalf("report ParentBlockHash %s != hash of block %d: %s",
-			report.ParentBlockHash.Hex(), report.BlockNumber-1, parentHeader.Hash().Hex())
-	}
+	CheckReportBlockNumberAndParentBlockHash(t, ctx, builder, report)
 
 	// Verify that the report contains the filtered address with an EventRuleMatch
 	foundEventRule := false
@@ -386,14 +290,14 @@ func TestAddressFilterPostTxFilterReport(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Start in-process filtering-report RPC server that captures reports
-	reportStack, capturer := newCapturingReportStack(t)
-
 	builder := NewNodeBuilder(ctx).DefaultConfig(t, false)
 	builder.isSequencer = true
-	builder.execConfig.TransactionFiltering.FilteringReportRPCClient.URL = reportStack.HTTPEndpoint()
+	endpoint := SetupFilteringReport(t, builder)
 	cleanup := builder.Build(t)
 	defer cleanup()
+
+	chainID, err := builder.L2.Client.ChainID(ctx)
+	Require(t, err)
 
 	testStartTime := time.Now()
 
@@ -407,9 +311,8 @@ func TestAddressFilterPostTxFilterReport(t *testing.T) {
 
 	// CALL to filtered target triggers postTxFilter (the target address is reached
 	// via the CALL opcode during execution, not from the tx's To field)
-	reportCountBefore := len(capturer.getReports())
 	auth := builder.L2Info.GetDefaultTransactOpts("Owner", ctx)
-	_, err := caller.CallTarget(&auth, targetAddr)
+	_, err = caller.CallTarget(&auth, targetAddr)
 	if err == nil {
 		t.Fatal("expected CALL to filtered address to be rejected")
 	}
@@ -417,11 +320,7 @@ func TestAddressFilterPostTxFilterReport(t *testing.T) {
 		t.Fatalf("expected filtered error, got: %v", err)
 	}
 
-	// contract binding returns nil tx on RPC error, so match by count
-	report := waitForNewReport(t, capturer, reportCountBefore)
-	if report == nil {
-		t.Fatal("expected report to not be nil")
-	}
+	report := endpoint.NextReport(t)
 	if report.ID == "" {
 		t.Fatal("report ID should not be empty")
 	}
@@ -431,21 +330,17 @@ func TestAddressFilterPostTxFilterReport(t *testing.T) {
 	if len(report.TxRLP) == 0 {
 		t.Fatal("report TxRLP should not be empty")
 	}
+	assertReportTxRLPMatches(t, report)
+	if report.ChainID != chainID.Uint64() {
+		t.Fatalf("report ChainID %d != expected %d", report.ChainID, chainID.Uint64())
+	}
 	if report.IsDelayed {
 		t.Fatal("report should not be marked as delayed")
 	}
 	if report.FilteredAt.Before(testStartTime) {
 		t.Fatalf("report FilteredAt %v is before test start %v", report.FilteredAt, testStartTime)
 	}
-	if report.BlockNumber == 0 {
-		t.Fatal("report BlockNumber should be non-zero")
-	}
-	parentHeader, err := builder.L2.Client.HeaderByNumber(ctx, new(big.Int).SetUint64(report.BlockNumber-1))
-	Require(t, err)
-	if report.ParentBlockHash != parentHeader.Hash() {
-		t.Fatalf("report ParentBlockHash %s != hash of block %d: %s",
-			report.ParentBlockHash.Hex(), report.BlockNumber-1, parentHeader.Hash().Hex())
-	}
+	CheckReportBlockNumberAndParentBlockHash(t, ctx, builder, report)
 
 	// Verify filtered address is present with correct reason and no EventRuleMatch
 	foundTarget := false
@@ -463,7 +358,6 @@ func TestAddressFilterPostTxFilterReport(t *testing.T) {
 	}
 
 	// Verify no spurious report for a clean CALL to a non-filtered target
-	reportCountBefore = len(capturer.getReports())
 	cleanTargetAddr, _ := deployAddressFilterTestContract(t, ctx, builder)
 	auth = builder.L2Info.GetDefaultTransactOpts("Owner", ctx)
 	tx, err := caller.CallTarget(&auth, cleanTargetAddr)
@@ -471,10 +365,7 @@ func TestAddressFilterPostTxFilterReport(t *testing.T) {
 	_, err = builder.L2.EnsureTxSucceeded(tx)
 	Require(t, err)
 
-	time.Sleep(500 * time.Millisecond)
-	if len(capturer.getReports()) != reportCountBefore {
-		t.Fatalf("expected no new reports for clean CALL, got %d new", len(capturer.getReports())-reportCountBefore)
-	}
+	endpoint.AssertNoReport(t, 500*time.Millisecond)
 }
 
 func deployAddressFilterTestContract(t *testing.T, ctx context.Context, builder *NodeBuilder) (common.Address, *localgen.AddressFilterTest) {
