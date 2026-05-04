@@ -273,8 +273,8 @@ func TestAddressFilterCall(t *testing.T) {
 	targetAddr, _ := deployAddressFilterTestContract(t, ctx, builder)
 
 	// Set up filter to block the target contract
-	filter := newHashedChecker([]common.Address{targetAddr})
-	builder.L2.ExecNode.ExecEngine.SetAddressChecker(t, filter)
+	checker := newHashedChecker([]common.Address{targetAddr})
+	builder.L2.ExecNode.ExecEngine.SetAddressChecker(t, checker)
 
 	// Test: CALL to filtered address should fail
 	auth := builder.L2Info.GetDefaultTransactOpts("Owner", ctx)
@@ -296,6 +296,9 @@ func TestAddressFilterCall(t *testing.T) {
 		if fa.Address == targetAddr {
 			if fa.FilterReason.EventRuleMatch != nil {
 				t.Fatal("expected nil EventRuleMatch for direct address filter via CALL")
+			}
+			if fa.FilterReason.Reason != filter.ReasonContractAddress {
+				t.Fatalf("expected filter reason %q, got %q", filter.ReasonContractAddress, fa.FilterReason.Reason)
 			}
 			foundTarget = true
 			break
