@@ -249,6 +249,20 @@ func PruneExecutionDBWithDistance(ctx context.Context, executionDB ethdb.Databas
 	if initConfig.Prune == "" {
 		return pruner.RecoverPruning(stack.InstanceDir(), executionDB, initConfig.PruneThreads)
 	}
+
+	log.Info("Pruning started",
+		"mode", initConfig.Prune,
+		"threads", initConfig.PruneThreads,
+		"bloomSizeMB", initConfig.PruneBloomSize,
+	)
+	if initConfig.Prune == "full" || initConfig.Prune == "minimal" {
+		log.Info("Pruning may take several days for large databases. Progress will be logged periodically. " +
+			"Tip: if this is taking too long, downloading a fresh pruned snapshot with --init.latest pruned may be faster. " +
+			"See https://docs.arbitrum.io/run-arbitrum-node/nitro/nitro-database-snapshots")
+	} else {
+		log.Info("Pruning may take several days for large databases. Progress will be logged periodically.")
+	}
+
 	l1ClientOpt := containers.None[*ethclient.Client]()
 	if l1Client != nil {
 		l1ClientOpt = containers.Some(l1Client)
