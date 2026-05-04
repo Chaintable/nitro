@@ -4,6 +4,7 @@
 package arbtest
 
 import (
+	"bytes"
 	"context"
 	"math/big"
 	"strings"
@@ -174,7 +175,7 @@ func TestAddressFilterEventRuleReport(t *testing.T) {
 	defer cleanup()
 
 	// Deploy test contract
-	_, contract := deployAddressFilterTestContract(t, ctx, builder)
+	contractAddr, contract := deployAddressFilterTestContract(t, ctx, builder)
 
 	// Create filtered address and set up address filter
 	builder.L2Info.GenerateAccount("FilteredBeneficiary")
@@ -210,6 +211,30 @@ func TestAddressFilterEventRuleReport(t *testing.T) {
 			}
 			if fa.FilterReason.EventRuleMatch.MatchedTopicIndex != 2 {
 				t.Fatalf("expected MatchedTopicIndex 2, got %d", fa.FilterReason.EventRuleMatch.MatchedTopicIndex)
+			}
+			rawLog := fa.FilterReason.EventRuleMatch.RawLog
+			if rawLog == nil {
+				t.Fatal("expected non-nil RawLog in EventRuleMatch")
+			}
+			if rawLog.Address != contractAddr {
+				t.Fatalf("expected RawLog.Address %s, got %s", contractAddr.Hex(), rawLog.Address.Hex())
+			}
+			if len(rawLog.Topics) != 3 {
+				t.Fatalf("expected 3 topics, got %d", len(rawLog.Topics))
+			}
+			expectedSelector := crypto.Keccak256Hash([]byte("Transfer(address,address,uint256)"))
+			if rawLog.Topics[0] != expectedSelector {
+				t.Fatalf("expected topic[0] %s, got %s", expectedSelector.Hex(), rawLog.Topics[0].Hex())
+			}
+			if rawLog.Topics[1] != common.BytesToHash(auth.From.Bytes()) {
+				t.Fatalf("expected topic[1] to contain Owner address %s, got %s", auth.From.Hex(), rawLog.Topics[1].Hex())
+			}
+			if rawLog.Topics[2] != common.BytesToHash(filteredAddr.Bytes()) {
+				t.Fatalf("expected topic[2] to contain filtered address %s, got %s", filteredAddr.Hex(), rawLog.Topics[2].Hex())
+			}
+			expectedData := common.BigToHash(big.NewInt(1)).Bytes()
+			if !bytes.Equal(rawLog.Data, expectedData) {
+				t.Fatalf("expected RawLog.Data %x, got %x", expectedData, rawLog.Data)
 			}
 			foundEventRule = true
 			break
