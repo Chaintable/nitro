@@ -320,6 +320,10 @@ func TestDelayedMessageFilterHalting(t *testing.T) {
 
 	builder.L2.ExecNode.ExecEngine.SetAddressChecker(t, filter)
 
+	// Capture delayed message count before sending, so we can predict InboxRequestId
+	delayedCountBefore, err := builder.L2.ConsensusNode.InboxTracker.GetDelayedCount()
+	require.NoError(t, err)
+
 	// Prepare and send delayed tx TO filtered address
 	delayedTx := builder.L2Info.PrepareTx("Sender", "FilteredUser", builder.L2Info.TransferGas, big.NewInt(1e12), nil)
 	txHash := sendDelayedTx(t, ctx, builder, delayedTx)
@@ -340,8 +344,9 @@ func TestDelayedMessageFilterHalting(t *testing.T) {
 	CheckCommonReportFields(t, ctx, builder, report, delayedTx)
 	require.True(t, report.IsDelayed)
 	require.NotNil(t, report.DelayedReportData, "delayed report data should be set")
-	require.NotEqual(t, common.Hash{}, report.DelayedReportData.InboxRequestId,
-		"InboxRequestId should be populated from the delayed message header")
+	expectedRequestId := common.BigToHash(big.NewInt(int64(delayedCountBefore))) // #nosec G115
+	require.Equal(t, expectedRequestId, report.DelayedReportData.InboxRequestId,
+		"InboxRequestId should match the delayed message index")
 
 	// Filtered addresses: target address with reason "to" and no EventRuleMatch
 	require.NotEmpty(t, report.FilteredAddresses)
@@ -2690,6 +2695,9 @@ func TestDelayedMessageFilterCatchesEventFilter(t *testing.T) {
 	callData, err := contractABI.Pack("emitTransfer", senderAddr, filteredAddr)
 	require.NoError(t, err)
 
+	delayedCountBefore, err := builder.L2.ConsensusNode.InboxTracker.GetDelayedCount()
+	require.NoError(t, err)
+
 	delayedTx := prepareDelayedContractCall(t, builder, "Sender", contractAddr, callData)
 	txHash := sendDelayedTx(t, ctx, builder, delayedTx)
 
@@ -2704,8 +2712,9 @@ func TestDelayedMessageFilterCatchesEventFilter(t *testing.T) {
 	CheckCommonReportFields(t, ctx, builder, report, delayedTx)
 	require.True(t, report.IsDelayed)
 	require.NotNil(t, report.DelayedReportData)
-	require.NotEqual(t, common.Hash{}, report.DelayedReportData.InboxRequestId,
-		"InboxRequestId should be populated from the delayed message header")
+	expectedRequestId := common.BigToHash(big.NewInt(int64(delayedCountBefore))) // #nosec G115
+	require.Equal(t, expectedRequestId, report.DelayedReportData.InboxRequestId,
+		"InboxRequestId should match the delayed message index")
 
 	foundEventRule := false
 	for _, addr := range report.FilteredAddresses {

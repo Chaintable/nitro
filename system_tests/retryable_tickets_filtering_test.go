@@ -1728,6 +1728,9 @@ func TestRetryableFilteringAutoRedeemFilteredDepth1Report(t *testing.T) {
 	retryData, err := callerABI.Pack("callTarget", filteredTarget)
 	require.NoError(t, err)
 
+	delayedCountBefore, err := builder.L2.ConsensusNode.InboxTracker.GetDelayedCount()
+	require.NoError(t, err)
+
 	_, ticketId := submitRetryableViaL1(t, p, "Faucet", callerAddr, common.Big0, cleanBeneficiary, cleanBeneficiary, retryData)
 	advanceL1ForDelayed(t, ctx, builder)
 
@@ -1742,8 +1745,9 @@ func TestRetryableFilteringAutoRedeemFilteredDepth1Report(t *testing.T) {
 	require.Equal(t, ticketId, report.TxHash)
 	require.True(t, report.IsDelayed)
 	require.NotNil(t, report.DelayedReportData, "delayed report data should be set")
-	require.NotEqual(t, common.Hash{}, report.DelayedReportData.InboxRequestId,
-		"InboxRequestId should be populated from the delayed message header")
+	expectedRequestId := common.BigToHash(big.NewInt(int64(delayedCountBefore))) // #nosec G115
+	require.Equal(t, expectedRequestId, report.DelayedReportData.InboxRequestId,
+		"InboxRequestId should match the delayed message index")
 
 	// Filtered addresses: should contain filteredTarget (the contract the redeem called)
 	require.NotEmpty(t, report.FilteredAddresses)
