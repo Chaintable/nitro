@@ -82,7 +82,7 @@ func checkDelayedReportFields(t *testing.T, report *addressfilter.FilteredTxRepo
 	require.NotNil(t, report.DelayedReportData, "delayed report data should be set")
 	expectedRequestId := common.BigToHash(big.NewInt(int64(delayedCountBefore))) // #nosec G115
 	require.Equal(t, expectedRequestId, report.DelayedReportData.InboxRequestId,
-		"InboxRequestId should match the delayed message index")
+		"InboxRequestId should match the delayed inbox count before sending")
 }
 
 // sendDelayedTx sends a transaction via L1 delayed inbox.
@@ -330,7 +330,6 @@ func TestDelayedMessageFilterHalting(t *testing.T) {
 
 	builder.L2.ExecNode.ExecEngine.SetAddressChecker(t, filter)
 
-	// Capture delayed message count before sending, so we can predict InboxRequestId
 	delayedCountBefore, err := builder.L2.ConsensusNode.InboxTracker.GetDelayedCount()
 	require.NoError(t, err)
 
@@ -356,7 +355,6 @@ func TestDelayedMessageFilterHalting(t *testing.T) {
 	// Position 1: internal ArbOS start-block tx is at 0, delayed user tx follows at 1
 	require.Equal(t, uint64(1), report.PositionInBlock, "positionInBlock should be 1 (first user tx after internal start-block tx)")
 
-	// Filtered addresses: target address with reason "to" and no EventRuleMatch
 	require.NotEmpty(t, report.FilteredAddresses)
 	foundTo := false
 	for _, addr := range report.FilteredAddresses {

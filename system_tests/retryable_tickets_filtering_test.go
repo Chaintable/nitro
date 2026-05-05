@@ -1668,7 +1668,6 @@ func TestRetryableFilteringAutoRedeemFilteredDepth1Report(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Setup builder with report mock BEFORE Build
 	builder := setupFilteredTxTestBuilder(t, ctx)
 	filteringReportStack, reportAPI := SetupFilteringReport(t)
 	builder.execConfig.TransactionFiltering.FilteringReportRPCClient.URL = filteringReportStack.HTTPEndpoint()
@@ -1731,7 +1730,8 @@ func TestRetryableFilteringAutoRedeemFilteredDepth1Report(t *testing.T) {
 	delayedCountBefore, err := builder.L2.ConsensusNode.InboxTracker.GetDelayedCount()
 	require.NoError(t, err)
 
-	_, ticketId := submitRetryableViaL1(t, p, "Faucet", callerAddr, common.Big0, cleanBeneficiary, cleanBeneficiary, retryData)
+	l1Receipt, ticketId := submitRetryableViaL1(t, p, "Faucet", callerAddr, common.Big0, cleanBeneficiary, cleanBeneficiary, retryData)
+	l2Tx := p.lookupL2Tx(l1Receipt)
 	advanceL1ForDelayed(t, ctx, builder)
 
 	// A's auto-redeem calls callTarget(filteredTarget) → filter → group revert → halt
@@ -1741,8 +1741,7 @@ func TestRetryableFilteringAutoRedeemFilteredDepth1Report(t *testing.T) {
 	report := reportAPI.NextReport(t)
 
 	// Core identity: should be the originating submission tx, not the redeem
-	CheckCommonReportFields(t, ctx, builder, report, nil)
-	require.Equal(t, ticketId, report.TxHash)
+	CheckCommonReportFields(t, ctx, builder, report, l2Tx)
 	checkDelayedReportFields(t, report, delayedCountBefore)
 	// Position 1: the originating retryable submission tx is at position 1 (after internal start-block tx at 0)
 	require.Equal(t, uint64(1), report.PositionInBlock, "positionInBlock should reflect the originating user tx position, not the redeem")
