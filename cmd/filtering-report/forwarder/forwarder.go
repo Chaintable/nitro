@@ -54,6 +54,7 @@ type Config struct {
 	SQSWaitTimeSeconds                  int32                                      `koanf:"sqs-wait-time-seconds"`
 	ExternalEndpoint                    genericconf.HTTPClientConfig               `koanf:"external-endpoint"`
 	ExternalEndpointRetryableHTTPErrorSlowdown ExternalEndpointRetryableHTTPErrorSlowdownConfig  `koanf:"external-endpoint-retryable-error-slowdown"`
+	PoisonQueue                         sqsclient.QueueConfig                      `koanf:"poison-queue"`
 }
 
 var DefaultConfig = Config{
@@ -62,6 +63,7 @@ var DefaultConfig = Config{
 	SQSWaitTimeSeconds:                  5,
 	ExternalEndpoint:                    genericconf.HTTPClientConfigDefault,
 	ExternalEndpointRetryableHTTPErrorSlowdown: DefaultExternalEndpointRetryableHTTPErrorSlowdownConfig,
+	PoisonQueue:                         sqsclient.DefaultQueueConfig,
 }
 
 func (c *Config) Validate() error {
@@ -83,6 +85,7 @@ func ConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.Int32(prefix+".sqs-wait-time-seconds", DefaultConfig.SQSWaitTimeSeconds, "SQS long polling wait time in seconds")
 	genericconf.HTTPClientConfigAddOptions(prefix+".external-endpoint", f)
 	ExternalEndpointRetryableHTTPErrorSlowdownConfigAddOptions(prefix+".external-endpoint-retryable-error-slowdown", f)
+	sqsclient.QueueConfigAddOptions(prefix+".poison-queue", f)
 }
 
 type Forwarder struct {
@@ -101,10 +104,10 @@ func New(config *Config, queueClient sqsclient.QueueClient, poisonQueueClient sq
 		return nil, errors.New("queueClient must not be nil")
 	}
 	return &Forwarder{
-		config:      config,
-		queueClient: queueClient,
+		config:            config,
+		queueClient:       queueClient,
 		poisonQueueClient: poisonQueueClient,
-		httpClient:  &http.Client{Timeout: config.ExternalEndpoint.Timeout},
+		httpClient:        &http.Client{Timeout: config.ExternalEndpoint.Timeout},
 	}, nil
 }
 

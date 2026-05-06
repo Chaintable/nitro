@@ -42,7 +42,6 @@ type FilteringReportConfig struct {
 	Auth genericconf.AuthRPCConfig `koanf:"auth"`
 
 	Queue           sqsclient.QueueConfig `koanf:"queue"`
-	PoisonQueue     sqsclient.QueueConfig `koanf:"poison-queue"`
 	ReportForwarder forwarder.Config      `koanf:"report-forwarder"`
 }
 
@@ -82,7 +81,6 @@ var DefaultFilteringReportConfig = FilteringReportConfig{
 	IPC:             IPCConfigDefault,
 	Auth:            genericconf.AuthRPCConfigDefault,
 	Queue:           sqsclient.DefaultQueueConfig,
-	PoisonQueue:     sqsclient.DefaultQueueConfig,
 	ReportForwarder: forwarder.DefaultConfig,
 }
 
@@ -115,7 +113,6 @@ func addFlags(f *pflag.FlagSet) {
 	genericconf.IPCConfigAddOptions("ipc", f)
 
 	sqsclient.QueueConfigAddOptions("queue", f)
-	sqsclient.QueueConfigAddOptions("poison-queue", f)
 	forwarder.ConfigAddOptions("report-forwarder", f)
 }
 
@@ -135,10 +132,10 @@ func parseConfig(args []string) (*FilteringReportConfig, error) {
 	}
 	if config.Conf.Dump {
 		err = confighelpers.DumpConfig(k, map[string]interface{}{
-			"queue.sqs-client.access-key": "",
-			"queue.sqs-client.secret-key": "",
-			"poison-queue.sqs-client.access-key": "",
-			"poison-queue.sqs-client.secret-key": "",
+			"queue.sqs-client.access-key":                            "",
+			"queue.sqs-client.secret-key":                            "",
+			"report-forwarder.poison-queue.sqs-client.access-key": "",
+			"report-forwarder.poison-queue.sqs-client.secret-key": "",
 		})
 		if err != nil {
 			return nil, fmt.Errorf("error removing extra parameters before dump: %w", err)
@@ -208,8 +205,8 @@ func mainImpl() int {
 		return 1
 	}
 	var poisonQueueClient sqsclient.QueueClient
-	if config.PoisonQueue.QueueURL != "" {
-		poisonQueueClient, err = sqsclient.NewQueueClient(ctx, &config.PoisonQueue)
+	if config.ReportForwarder.PoisonQueue.QueueURL != "" {
+		poisonQueueClient, err = sqsclient.NewQueueClient(ctx, &config.ReportForwarder.PoisonQueue)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error creating poison queue SQS client: %v\n", err)
 			return 1
