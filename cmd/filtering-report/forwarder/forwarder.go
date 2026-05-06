@@ -89,11 +89,11 @@ type Forwarder struct {
 	stopwaiter.StopWaiter
 	config      *Config
 	queueClient sqsclient.QueueClient
-	dlqClient   sqsclient.QueueClient
+	poisonQueueClient sqsclient.QueueClient
 	httpClient  *http.Client
 }
 
-func New(config *Config, queueClient sqsclient.QueueClient, dlqClient sqsclient.QueueClient) (*Forwarder, error) {
+func New(config *Config, queueClient sqsclient.QueueClient, poisonQueueClient sqsclient.QueueClient) (*Forwarder, error) {
 	if config == nil {
 		return nil, errors.New("config must not be nil")
 	}
@@ -103,7 +103,7 @@ func New(config *Config, queueClient sqsclient.QueueClient, dlqClient sqsclient.
 	return &Forwarder{
 		config:      config,
 		queueClient: queueClient,
-		dlqClient:   dlqClient,
+		poisonQueueClient: poisonQueueClient,
 		httpClient:  &http.Client{Timeout: config.ExternalEndpoint.Timeout},
 	}, nil
 }
@@ -138,7 +138,7 @@ func (r *Forwarder) pollAndForward(ctx context.Context, consecutiveRetryableHTTP
 					return r.config.ExternalEndpointRetryableHTTPErrorSlowdown.Duration
 				}
 			} else {
-				r.sendToDLQ(ctx, msg)
+				r.sendToPoisonQueue(ctx, msg)
 			}
 		}
 		return 0
@@ -150,16 +150,16 @@ func (r *Forwarder) pollAndForward(ctx context.Context, consecutiveRetryableHTTP
 	return 0
 }
 
-func (r *Forwarder) sendToDLQ(ctx context.Context, msg sqstypes.Message) {
-	if r.dlqClient == nil {
+func (r *Forwarder) sendToPoisonQueue(ctx context.Context, msg sqstypes.Message) {
+	if r.poisonQueueClient == nil {
 		return
 	}
-	if err := r.dlqClient.Send(ctx, *msg.Body); err != nil {
-		log.Error("Failed to send message to DLQ", "err", err, "messageId", *msg.MessageId)
+	if err := r.poisonQueueClient.Send(ctx, *msg.Body); err != nil {
+		log.Error("Failed to send message to poison queue", "err", err, "messageId", *msg.MessageId)
 		return
 	}
 	if err := r.queueClient.Delete(ctx, *msg.ReceiptHandle); err != nil {
-		log.Error("Failed to delete SQS message after sending to DLQ", "err", err, "messageId", *msg.MessageId)
+		log.Error("Failed to delete SQS message after sending to poison queue", "err", err, "messageId", *msg.MessageId)
 	}
 }
 

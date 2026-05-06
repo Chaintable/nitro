@@ -379,14 +379,14 @@ func TestForwarder_RetryableHTTPErrorSlowdown_NonRetryableErrorDoesNotCount(t *t
 	}
 }
 
-func TestForwarder_DLQ_NonRetryableErrorSentToDLQ(t *testing.T) {
+func TestForwarder_PoisonQueue_NonRetryableErrorSentToPoisonQueue(t *testing.T) {
 	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 	}))
 	defer externalEndpointServer.Close()
 
 	queueClient := &sqsclient.MockQueueClient{}
-	dlqClient := &sqsclient.MockQueueClient{}
+	poisonQueueClient := &sqsclient.MockQueueClient{}
 
 	stack := api.NewTestStack(t, queueClient)
 	rpcClient := stack.Attach()
@@ -409,32 +409,32 @@ func TestForwarder_DLQ_NonRetryableErrorSentToDLQ(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	forwarder := NewTestForwarder(t, queueClient, dlqClient, externalEndpointServer.URL)
+	forwarder := NewTestForwarder(t, queueClient, poisonQueueClient, externalEndpointServer.URL)
 	var consecutiveRetryableHTTPErrors int
 	forwarder.pollAndForward(t.Context(), &consecutiveRetryableHTTPErrors)
 
-	// Message should have been sent to DLQ.
-	sentBodies := dlqClient.SentBodies()
+	// Message should have been sent to poison queue.
+	sentBodies := poisonQueueClient.SentBodies()
 	if len(sentBodies) != 1 {
-		t.Fatalf("expected 1 message sent to DLQ, got %d", len(sentBodies))
+		t.Fatalf("expected 1 message sent to poison queue, got %d", len(sentBodies))
 	}
 
 	// Message should have been deleted from main queue.
 	deleted := queueClient.DeletedReceiptHandles()
 	if len(deleted) != 1 {
-		t.Fatalf("expected 1 delete from main queue after DLQ send, got %d", len(deleted))
+		t.Fatalf("expected 1 delete from main queue after poison queue send, got %d", len(deleted))
 	}
 }
 
-func TestForwarder_DLQ_SendFailureLeavesMessageInQueue(t *testing.T) {
+func TestForwarder_PoisonQueue_SendFailureLeavesMessageInQueue(t *testing.T) {
 	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 	}))
 	defer externalEndpointServer.Close()
 
 	queueClient := &sqsclient.MockQueueClient{}
-	dlqClient := &sqsclient.MockQueueClient{
-		SendErr: fmt.Errorf("simulated DLQ send error"),
+	poisonQueueClient := &sqsclient.MockQueueClient{
+		SendErr: fmt.Errorf("simulated poison queue send error"),
 	}
 
 	stack := api.NewTestStack(t, queueClient)
@@ -458,13 +458,13 @@ func TestForwarder_DLQ_SendFailureLeavesMessageInQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	forwarder := NewTestForwarder(t, queueClient, dlqClient, externalEndpointServer.URL)
+	forwarder := NewTestForwarder(t, queueClient, poisonQueueClient, externalEndpointServer.URL)
 	var consecutiveRetryableHTTPErrors int
 	forwarder.pollAndForward(t.Context(), &consecutiveRetryableHTTPErrors)
 
-	// DLQ send failed, so message should NOT have been deleted from main queue.
+	// Poison queue send failed, so message should NOT have been deleted from main queue.
 	deleted := queueClient.DeletedReceiptHandles()
 	if len(deleted) != 0 {
-		t.Fatalf("expected 0 deletes when DLQ send fails, got %d", len(deleted))
+		t.Fatalf("expected 0 deletes when poison queue send fails, got %d", len(deleted))
 	}
 }

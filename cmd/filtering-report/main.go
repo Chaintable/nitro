@@ -42,7 +42,7 @@ type FilteringReportConfig struct {
 	Auth genericconf.AuthRPCConfig `koanf:"auth"`
 
 	Queue           sqsclient.QueueConfig `koanf:"queue"`
-	DLQ             sqsclient.QueueConfig `koanf:"dlq"`
+	PoisonQueue     sqsclient.QueueConfig `koanf:"poison-queue"`
 	ReportForwarder forwarder.Config      `koanf:"report-forwarder"`
 }
 
@@ -82,7 +82,7 @@ var DefaultFilteringReportConfig = FilteringReportConfig{
 	IPC:             IPCConfigDefault,
 	Auth:            genericconf.AuthRPCConfigDefault,
 	Queue:           sqsclient.DefaultQueueConfig,
-	DLQ:             sqsclient.DefaultQueueConfig,
+	PoisonQueue:     sqsclient.DefaultQueueConfig,
 	ReportForwarder: forwarder.DefaultConfig,
 }
 
@@ -115,7 +115,7 @@ func addFlags(f *pflag.FlagSet) {
 	genericconf.IPCConfigAddOptions("ipc", f)
 
 	sqsclient.QueueConfigAddOptions("queue", f)
-	sqsclient.QueueConfigAddOptions("dlq", f)
+	sqsclient.QueueConfigAddOptions("poison-queue", f)
 	forwarder.ConfigAddOptions("report-forwarder", f)
 }
 
@@ -137,8 +137,8 @@ func parseConfig(args []string) (*FilteringReportConfig, error) {
 		err = confighelpers.DumpConfig(k, map[string]interface{}{
 			"queue.sqs-client.access-key": "",
 			"queue.sqs-client.secret-key": "",
-			"dlq.sqs-client.access-key":   "",
-			"dlq.sqs-client.secret-key":   "",
+			"poison-queue.sqs-client.access-key": "",
+			"poison-queue.sqs-client.secret-key": "",
 		})
 		if err != nil {
 			return nil, fmt.Errorf("error removing extra parameters before dump: %w", err)
@@ -207,15 +207,15 @@ func mainImpl() int {
 		fmt.Fprintf(os.Stderr, "error creating SQS client: %v\n", err)
 		return 1
 	}
-	var dlqClient sqsclient.QueueClient
-	if config.DLQ.QueueURL != "" {
-		dlqClient, err = sqsclient.NewQueueClient(ctx, &config.DLQ)
+	var poisonQueueClient sqsclient.QueueClient
+	if config.PoisonQueue.QueueURL != "" {
+		poisonQueueClient, err = sqsclient.NewQueueClient(ctx, &config.PoisonQueue)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error creating DLQ SQS client: %v\n", err)
+			fmt.Fprintf(os.Stderr, "error creating poison queue SQS client: %v\n", err)
 			return 1
 		}
 	}
-	fwd, err := forwarder.New(&config.ReportForwarder, queueClient, dlqClient)
+	fwd, err := forwarder.New(&config.ReportForwarder, queueClient, poisonQueueClient)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error creating forwarder: %v\n", err)
 		return 1

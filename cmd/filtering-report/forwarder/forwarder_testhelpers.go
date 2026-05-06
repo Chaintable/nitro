@@ -59,7 +59,7 @@ func (m *MockExternalEndpoint) URL() string {
 	return m.server.URL
 }
 
-func NewTestForwarder(t *testing.T, queueClient *sqsclient.MockQueueClient, dlqClient *sqsclient.MockQueueClient, endpointURL string) *Forwarder {
+func NewTestForwarder(t *testing.T, queueClient *sqsclient.MockQueueClient, poisonQueueClient *sqsclient.MockQueueClient, endpointURL string) *Forwarder {
 	t.Helper()
 	config := &Config{
 		Workers:            1,
@@ -71,11 +71,11 @@ func NewTestForwarder(t *testing.T, queueClient *sqsclient.MockQueueClient, dlqC
 		},
 		ExternalEndpointRetryableHTTPErrorSlowdown: DefaultExternalEndpointRetryableHTTPErrorSlowdownConfig,
 	}
-	var dlq sqsclient.QueueClient
-	if dlqClient != nil {
-		dlq = dlqClient
+	var poisonQueue sqsclient.QueueClient
+	if poisonQueueClient != nil {
+		poisonQueue = poisonQueueClient
 	}
-	fwd, err := New(config, queueClient, dlq)
+	fwd, err := New(config, queueClient, poisonQueue)
 	if err != nil {
 		t.Fatal(err)
 	}
