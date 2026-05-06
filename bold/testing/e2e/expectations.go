@@ -67,8 +67,9 @@ func expectChallengeWinWithAllHonestEssentialEdgesConfirmed(
 			t.Fatal("assertion was not confirmed")
 		}
 
-		// Scrape the edges that have been added to the challenge so far, then
-		// wait until all of the essential root edges among them are confirmed.
+		// The challenge has confirmed by this point, so no further edges will
+		// be added. Scrape the edges added so far, then wait until all of the
+		// essential root edges among them are confirmed.
 		cm, err := challengeV2gen.NewEdgeChallengeManager(cmAddr, backend)
 		require.NoError(t, err)
 
@@ -97,9 +98,10 @@ func expectChallengeWinWithAllHonestEssentialEdgesConfirmed(
 		}
 
 		// Wait until all of the honest essential root ids are confirmed, with a
-		// per-test deadline well below the package's global test timeout so a
-		// stall surfaces as a structured failure (with the unconfirmed edge
-		// IDs) instead of silently consuming the entire CI budget.
+		// per-test deadline (30m) well below the CI job timeout (--timeout 90m
+		// in .github/workflows/_go-tests.yml). On stall this fails fast with
+		// the unconfirmed edge IDs instead of letting the parent ctx expire
+		// silently and burning the entire CI budget.
 		waitCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 		defer cancel()
 		ticker := time.NewTicker(500 * time.Millisecond)
@@ -110,13 +112,22 @@ func expectChallengeWinWithAllHonestEssentialEdgesConfirmed(
 				if markedConfirmed {
 					continue
 				}
-				// retry.UntilSucceeds only returns an error when ctx is done,
-				// so on err we just exit the inner loop and let the outer
-				// select emit the structured diagnostic.
+				// retry.UntilSucceeds only returns an error when its context is
+				// done, and we pass waitCtx here, so an error necessarily means
+				// waitCtx is expired. Break out of the inner loop and let the
+				// outer select hit its <-waitCtx.Done() case, which emits the
+				// structured diagnostic with unconfirmed edge IDs. Do NOT pass
+				// a shorter-lived context to retry.UntilSucceeds without
+				// revisiting this; the assertion below pins the contract at
+				// the call site so a future refactor of retry.UntilSucceeds
+				// surfaces immediately instead of silently spinning.
 				edge, err := retry.UntilSucceeds(waitCtx, func() (challengeV2gen.ChallengeEdge, error) {
 					return cm.GetEdge(&bind.CallOpts{Context: waitCtx}, k)
 				})
 				if err != nil {
+					if waitCtx.Err() == nil {
+						t.Fatalf("retry.UntilSucceeds returned err with live ctx, contract violated: %v", err)
+					}
 					break
 				}
 				if edge.Status == uint8(protocol.EdgeConfirmed) {
