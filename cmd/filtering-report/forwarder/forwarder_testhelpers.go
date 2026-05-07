@@ -27,8 +27,17 @@ type MockExternalEndpoint struct {
 	requestCount atomic.Int64
 }
 
-func NewMockExternalEndpoint(t *testing.T, v *signertest.Verifier) *MockExternalEndpoint {
+func NewMockExternalEndpoint(t *testing.T, leaf signertest.LeafOptions) (pemPath string, endpoint *MockExternalEndpoint) {
 	t.Helper()
+	pemPath, caPath := signertest.SigningFixture(t, leaf)
+	verifier, err := signertest.NewVerifier(&signertest.VerifierConfig{
+		CARootPEMFile: caPath,
+		ExpectedSAN:   leaf.URI,
+		TimestampSkew: signertest.DefaultTimestampSkew,
+	})
+	if err != nil {
+		t.Fatalf("NewVerifier: %v", err)
+	}
 	m := &MockExternalEndpoint{
 		reports: make(chan *addressfilter.FilteredTxReport, 100),
 	}
@@ -39,7 +48,7 @@ func NewMockExternalEndpoint(t *testing.T, v *signertest.Verifier) *MockExternal
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		if err := v.VerifyHTTPRequest(r, body); err != nil {
+		if err := verifier.VerifyHTTPRequest(r, body); err != nil {
 			t.Errorf("verifier rejected signed request: %v", err)
 			w.WriteHeader(http.StatusUnauthorized)
 			return
@@ -53,7 +62,7 @@ func NewMockExternalEndpoint(t *testing.T, v *signertest.Verifier) *MockExternal
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(func() { m.server.Close() })
-	return m
+	return pemPath, m
 }
 
 func (m *MockExternalEndpoint) NextReport(t *testing.T) *addressfilter.FilteredTxReport {
@@ -75,8 +84,10 @@ func (m *MockExternalEndpoint) ReceivedCount() int {
 	return int(m.requestCount.Load())
 }
 
-func NewTestForwarder(t *testing.T, queueClient sqsclient.QueueClient, endpointURL string, signerCfg signer.Config) *Forwarder {
+func NewTestForwarder(t *testing.T, queueClient sqsclient.QueueClient, endpointURL, pemPath string) *Forwarder {
 	t.Helper()
+	signerCfg := signer.DefaultConfig
+	signerCfg.PEMFile = pemPath
 	config := &Config{
 		Workers:            1,
 		PollInterval:       10 * time.Millisecond,
@@ -92,18 +103,4 @@ func NewTestForwarder(t *testing.T, queueClient sqsclient.QueueClient, endpointU
 		t.Fatal(err)
 	}
 	return fwd
-}
-
-func NewSignedFixture(t *testing.T) (pemPath string, endpoint *MockExternalEndpoint) {
-	t.Helper()
-	pemPath, caPath := signertest.SigningFixture(t, signertest.DefaultLeafOptions(TestSignerSAN))
-	verifier, err := signertest.NewVerifier(&signertest.VerifierConfig{
-		CARootPEMFile: caPath,
-		ExpectedSAN:   TestSignerSAN,
-		TimestampSkew: signertest.DefaultTimestampSkew,
-	})
-	if err != nil {
-		t.Fatalf("NewVerifier: %v", err)
-	}
-	return pemPath, NewMockExternalEndpoint(t, verifier)
 }

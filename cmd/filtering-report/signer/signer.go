@@ -48,6 +48,9 @@ func (c *Config) Validate() error {
 	if c.PEMFile == "" {
 		return errors.New("pem-file is required")
 	}
+	if c.ReloadInterval <= 0 {
+		return fmt.Errorf("reload-interval must be > 0, got %s", c.ReloadInterval)
+	}
 	return nil
 }
 
@@ -67,15 +70,11 @@ func NewSigner(config *Config) (*Signer, error) {
 	if config == nil {
 		return nil, errors.New("config must not be nil")
 	}
-	if config.PEMFile == "" {
-		return nil, errors.New("pem-file is required")
+	if err := config.Validate(); err != nil {
+		return nil, err
 	}
-	ri := config.ReloadInterval
-	if ri <= 0 {
-		ri = DefaultConfig.ReloadInterval
-	}
-	s := &Signer{pemFile: config.PEMFile, reloadInterval: ri}
-	if err := s.loadConfig(); err != nil {
+	s := &Signer{pemFile: config.PEMFile, reloadInterval: config.ReloadInterval}
+	if err := s.Reload(); err != nil {
 		return nil, fmt.Errorf("initial PEM load: %w", err)
 	}
 	return s, nil
@@ -84,7 +83,7 @@ func NewSigner(config *Config) (*Signer, error) {
 func (s *Signer) Start(ctx context.Context) {
 	s.StopWaiter.Start(ctx, s)
 	s.CallIteratively(func(_ context.Context) time.Duration {
-		if err := s.loadConfig(); err != nil {
+		if err := s.Reload(); err != nil {
 			log.Error("Failed to reload signing PEM, retaining previous credentials", "err", err, "file", s.pemFile)
 		} else {
 			log.Info("Reloaded signing PEM", "file", s.pemFile)
@@ -93,7 +92,15 @@ func (s *Signer) Start(ctx context.Context) {
 	})
 }
 
-func (s *Signer) loadConfig() error {
+func (s *Signer) LeafCert() *x509.Certificate {
+	creds := s.creds.Load()
+	if creds == nil {
+		return nil
+	}
+	return creds.leafCert
+}
+
+func (s *Signer) Reload() error {
 	data, err := os.ReadFile(s.pemFile)
 	if err != nil {
 		return fmt.Errorf("read PEM file %q: %w", s.pemFile, err)

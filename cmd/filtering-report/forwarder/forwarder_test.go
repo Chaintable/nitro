@@ -16,14 +16,13 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 
 	"github.com/offchainlabs/nitro/cmd/filtering-report/api"
-	"github.com/offchainlabs/nitro/cmd/filtering-report/signer"
 	"github.com/offchainlabs/nitro/cmd/filtering-report/signer/signertest"
 	"github.com/offchainlabs/nitro/execution/gethexec/addressfilter"
 	"github.com/offchainlabs/nitro/util/sqsclient"
 )
 
 func TestForwarder_ForwardsMessages(t *testing.T) {
-	pemPath, endpoint := NewSignedFixture(t)
+	pemPath, endpoint := NewMockExternalEndpoint(t, signertest.DefaultLeafOptions(TestSignerSAN))
 
 	queueClient := &sqsclient.MockQueueClient{}
 	stack := api.NewTestStack(t, queueClient)
@@ -63,7 +62,7 @@ func TestForwarder_ForwardsMessages(t *testing.T) {
 	}
 
 	ctx := t.Context()
-	forwarder := NewTestForwarder(t, queueClient, endpoint.URL(), signer.Config{PEMFile: pemPath})
+	forwarder := NewTestForwarder(t, queueClient, endpoint.URL(), pemPath)
 	forwarder.pollAndForward(ctx)
 	forwarder.pollAndForward(ctx)
 
@@ -116,7 +115,7 @@ func TestForwarder_EndpointFailure_DoesNotDelete(t *testing.T) {
 	}
 
 	ctx := t.Context()
-	forwarder := NewTestForwarder(t, queueClient, externalEndpointServer.URL, signer.Config{PEMFile: pemPath})
+	forwarder := NewTestForwarder(t, queueClient, externalEndpointServer.URL, pemPath)
 	forwarder.pollAndForward(ctx)
 
 	deleted := queueClient.DeletedReceiptHandles()
@@ -126,10 +125,10 @@ func TestForwarder_EndpointFailure_DoesNotDelete(t *testing.T) {
 }
 
 func TestForwarder_EmptyQueue(t *testing.T) {
-	pemPath, endpoint := NewSignedFixture(t)
+	pemPath, endpoint := NewMockExternalEndpoint(t, signertest.DefaultLeafOptions(TestSignerSAN))
 	queueClient := &sqsclient.MockQueueClient{}
 
-	forwarder := NewTestForwarder(t, queueClient, endpoint.URL(), signer.Config{PEMFile: pemPath})
+	forwarder := NewTestForwarder(t, queueClient, endpoint.URL(), pemPath)
 	interval := forwarder.pollAndForward(t.Context())
 
 	if got := endpoint.ReceivedCount(); got != 0 {
@@ -145,12 +144,12 @@ func TestForwarder_EmptyQueue(t *testing.T) {
 }
 
 func TestForwarder_ReceiveError(t *testing.T) {
-	pemPath, endpoint := NewSignedFixture(t)
+	pemPath, endpoint := NewMockExternalEndpoint(t, signertest.DefaultLeafOptions(TestSignerSAN))
 	queueClient := &sqsclient.MockQueueClient{
 		ReceiveErr: fmt.Errorf("simulated SQS error"),
 	}
 
-	forwarder := NewTestForwarder(t, queueClient, endpoint.URL(), signer.Config{PEMFile: pemPath})
+	forwarder := NewTestForwarder(t, queueClient, endpoint.URL(), pemPath)
 	interval := forwarder.pollAndForward(t.Context())
 
 	if interval != forwarder.config.PollInterval {
@@ -161,12 +160,7 @@ func TestForwarder_ReceiveError(t *testing.T) {
 func TestForwarder_DoesNotDeleteOnSignFailure(t *testing.T) {
 	opts := signertest.DefaultLeafOptions(TestSignerSAN)
 	opts.NotAfter = time.Now().Add(-time.Minute)
-	pemPath, _ := signertest.SigningFixture(t, opts)
-
-	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("external endpoint should not be hit when signing fails")
-	}))
-	defer externalEndpointServer.Close()
+	pemPath, endpoint := NewMockExternalEndpoint(t, opts)
 
 	queueClient := &sqsclient.MockQueueClient{}
 	stack := api.NewTestStack(t, queueClient)
@@ -190,16 +184,19 @@ func TestForwarder_DoesNotDeleteOnSignFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fwd := NewTestForwarder(t, queueClient, externalEndpointServer.URL, signer.Config{PEMFile: pemPath})
+	fwd := NewTestForwarder(t, queueClient, endpoint.URL(), pemPath)
 	fwd.pollAndForward(t.Context())
 
+	if got := endpoint.ReceivedCount(); got != 0 {
+		t.Fatalf("expected endpoint not hit when signing fails, got %d requests", got)
+	}
 	if deleted := queueClient.DeletedReceiptHandles(); len(deleted) != 0 {
 		t.Fatalf("expected 0 deletes after sign failure, got %d", len(deleted))
 	}
 }
 
 func TestForwarder_DeleteError(t *testing.T) {
-	pemPath, endpoint := NewSignedFixture(t)
+	pemPath, endpoint := NewMockExternalEndpoint(t, signertest.DefaultLeafOptions(TestSignerSAN))
 
 	queueClient := &sqsclient.MockQueueClient{
 		DeleteErr: fmt.Errorf("simulated SQS delete error"),
@@ -225,7 +222,7 @@ func TestForwarder_DeleteError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	forwarder := NewTestForwarder(t, queueClient, endpoint.URL(), signer.Config{PEMFile: pemPath})
+	forwarder := NewTestForwarder(t, queueClient, endpoint.URL(), pemPath)
 	interval := forwarder.pollAndForward(t.Context())
 
 	received := endpoint.NextReport(t)
