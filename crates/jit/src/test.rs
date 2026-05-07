@@ -155,14 +155,8 @@ fn call_i64_binop(
     }
 }
 
-/// Confirms that WAVM (soft-float) and JIT diverge for f32.min when one operand
-/// is a non-canonical NaN.
-///
-/// WAVM executes f32.min as a cross-module call to `wavm__f32_min` in soft-float.wasm,
-/// which returns the NaN bits unchanged.  JIT runs native f32.min with
-/// `canonicalize_nans(true)`, always producing the canonical quiet NaN 0x7FC00000.
-///
-/// This test asserts the correct (post-fix) behavior and currently fails.
+/// Both soft-float (WAVM) and JIT must return the canonical quiet NaN (0x7FC00000)
+/// from f32.min when either operand is a NaN.
 #[test]
 fn test_f32_min_nan_canonicalization() -> Result<()> {
     // 0x7F800001: signaling NaN (sNaN) — exponent=0xFF, mantissa=1, sign=0
@@ -187,7 +181,8 @@ fn test_f32_min_nan_canonicalization() -> Result<()> {
     Ok(())
 }
 
-/// Same as above but for f32.max.
+/// Both soft-float (WAVM) and JIT must return the canonical quiet NaN (0x7FC00000)
+/// from f32.max when either operand is a NaN.
 #[test]
 fn test_f32_max_nan_canonicalization() -> Result<()> {
     let snan: u32 = 0x7F800001;
@@ -211,7 +206,8 @@ fn test_f32_max_nan_canonicalization() -> Result<()> {
     Ok(())
 }
 
-/// Confirms divergence for f64.min with a non-canonical NaN.
+/// Both soft-float (WAVM) and JIT must return the canonical quiet NaN (0x7FF8000000000000)
+/// from f64.min when either operand is a NaN.
 #[test]
 fn test_f64_min_nan_canonicalization() -> Result<()> {
     // 0x7FF0000000000001: signaling NaN for f64
@@ -236,7 +232,8 @@ fn test_f64_min_nan_canonicalization() -> Result<()> {
     Ok(())
 }
 
-/// Confirms divergence for f64.max with a non-canonical NaN.
+/// Both soft-float (WAVM) and JIT must return the canonical quiet NaN (0x7FF8000000000000)
+/// from f64.max when either operand is a NaN.
 #[test]
 fn test_f64_max_nan_canonicalization() -> Result<()> {
     let snan: u64 = 0x7FF0000000000001;
@@ -260,9 +257,8 @@ fn test_f64_max_nan_canonicalization() -> Result<()> {
     Ok(())
 }
 
-/// Confirms that soft-float produces a wrong (negative) default NaN for operations
-/// that generate NaN from scratch (e.g. ∞ + -∞).  The SoftFloat 8086 variant uses
-/// defaultNaNF32UI = 0xFFC00000 (negative NaN), while JIT produces 0x7FC00000.
+/// Both soft-float (WAVM) and JIT must return the canonical quiet NaN (0x7FC00000)
+/// from f32 operations that generate NaN from scratch (e.g. +∞ + -∞).
 #[test]
 fn test_f32_add_generated_nan_canonicalization() -> Result<()> {
     let pos_inf: u32 = 0x7F800000; // +∞
@@ -286,16 +282,11 @@ fn test_f32_add_generated_nan_canonicalization() -> Result<()> {
     Ok(())
 }
 
-/// Confirms that demoting a non-canonical f64 NaN to f32 yields the canonical f32 NaN.
-///
-/// SoftFloat's f64_to_f32 converts via a commonNaN struct that preserves the sign
-/// and upper mantissa bits, potentially producing a non-canonical f32 NaN.
-/// JIT canonicalizes the result, so the two sides diverge without the fix.
+/// Both soft-float (WAVM) and JIT must return the canonical f32 NaN (0x7FC00000)
+/// when demoting a NaN f64 to f32.
 #[test]
 fn test_f32_demote_f64_nan_canonicalization() -> Result<()> {
-    // Non-canonical f64 NaN with a non-zero payload that survives demotion.
-    // 0x7FF0000000000001 is an sNaN; its upper mantissa bits map into the f32 payload.
-    let snan_f64: u64 = 0x7FF0000000000001;
+    let snan_f64: u64 = 0x7FF0000000000001; // sNaN: exponent=0x7FF, mantissa=1
     let canonical_nan_f32: u32 = 0x7FC00000;
 
     let (mut sf_store, sf) = load_soft_float()?;
@@ -312,7 +303,8 @@ fn test_f32_demote_f64_nan_canonicalization() -> Result<()> {
     Ok(())
 }
 
-/// Confirms that promoting a non-canonical f32 NaN to f64 yields the canonical f64 NaN.
+/// Both soft-float (WAVM) and JIT must return the canonical f64 NaN (0x7FF8000000000000)
+/// when promoting a NaN f32 to f64.
 #[test]
 fn test_f64_promote_f32_nan_canonicalization() -> Result<()> {
     let snan_f32: u32 = 0x7F800001;
@@ -332,7 +324,8 @@ fn test_f64_promote_f32_nan_canonicalization() -> Result<()> {
     Ok(())
 }
 
-/// Same divergence for f64 generated NaN.
+/// Both soft-float (WAVM) and JIT must return the canonical quiet NaN (0x7FF8000000000000)
+/// from f64 operations that generate NaN from scratch (e.g. +∞ + -∞).
 #[test]
 fn test_f64_add_generated_nan_canonicalization() -> Result<()> {
     let pos_inf: u64 = 0x7FF0000000000000; // +∞
