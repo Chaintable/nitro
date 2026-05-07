@@ -11,6 +11,16 @@ bool f32_isNaN(float32_t f) {
 	return fraction != 0;
 }
 
+// Canonical quiet NaN for f32: sign=0, exponent=0xFF, MSB of mantissa=1, rest=0.
+// JIT (Cranelift/LLVM) always produces this value when an operation yields NaN
+// (canonicalize_nans=true). WAVM must match to keep execution traces in sync.
+static const uint32_t F32_CANONICAL_NAN = 0x7FC00000;
+
+static inline uint32_t f32_canonicalize(uint32_t v) {
+	float32_t f = {v};
+	return f32_isNaN(f) ? F32_CANONICAL_NAN : v;
+}
+
 bool f32_isInfinity(float32_t f) {
 	if (f32_isReal(f)) return false;
 	uint32_t fraction = f.v & ((1 << 23) - 1);
@@ -50,68 +60,68 @@ uint32_t wavm__f32_neg(uint32_t v) {
 uint32_t wavm__f32_ceil(uint32_t v) {
 	float32_t f = {v};
 	f = f32_roundToInt(f, softfloat_round_max, true);
-	return f.v;
+	return f32_canonicalize(f.v);
 }
 
 uint32_t wavm__f32_floor(uint32_t v) {
 	float32_t f = {v};
 	f = f32_roundToInt(f, softfloat_round_min, true);
-	return f.v;
+	return f32_canonicalize(f.v);
 }
 
 uint32_t wavm__f32_trunc(uint32_t v) {
 	float32_t f = {v};
 	f = f32_roundToInt(f, softfloat_round_minMag, true);
-	return f.v;
+	return f32_canonicalize(f.v);
 }
 
 uint32_t wavm__f32_nearest(uint32_t v) {
 	float32_t f = {v};
 	f = f32_roundToInt(f, softfloat_round_near_even, true);
-	return f.v;
+	return f32_canonicalize(f.v);
 }
 
 uint32_t wavm__f32_sqrt(uint32_t v) {
 	float32_t f = {v};
 	f = f32_sqrt(f);
-	return f.v;
+	return f32_canonicalize(f.v);
 }
 
 uint32_t wavm__f32_add(uint32_t va, uint32_t vb) {
 	float32_t a = {va};
 	float32_t b = {vb};
 	float32_t f = f32_add(a, b);
-	return f.v;
+	return f32_canonicalize(f.v);
 }
 
 uint32_t wavm__f32_sub(uint32_t va, uint32_t vb) {
 	float32_t a = {va};
 	float32_t b = {vb};
 	float32_t f = f32_sub(a, b);
-	return f.v;
+	return f32_canonicalize(f.v);
 }
 
 uint32_t wavm__f32_mul(uint32_t va, uint32_t vb) {
 	float32_t a = {va};
 	float32_t b = {vb};
 	float32_t f = f32_mul(a, b);
-	return f.v;
+	return f32_canonicalize(f.v);
 }
 
 uint32_t wavm__f32_div(uint32_t va, uint32_t vb) {
 	float32_t a = {va};
 	float32_t b = {vb};
 	float32_t f = f32_div(a, b);
-	return f.v;
+	return f32_canonicalize(f.v);
 }
 
 uint32_t wavm__f32_min(uint32_t va, uint32_t vb) {
 	float32_t a = {va};
 	float32_t b = {vb};
 	if (f32_isNaN(a)) {
-		return a.v;
+		return F32_CANONICAL_NAN;
 	} else if (f32_isNaN(b)) {
-		return b.v;
+		return F32_CANONICAL_NAN;
 	} else if (f32_isInfinity(a) && f32_isNegative(a)) {
 		return a.v;
 	} else if (f32_isInfinity(b) && f32_isNegative(b)) {
@@ -135,9 +145,9 @@ uint32_t wavm__f32_max(uint32_t va, uint32_t vb) {
 	float32_t a = {va};
 	float32_t b = {vb};
 	if (f32_isNaN(a)) {
-		return a.v;
+		return F32_CANONICAL_NAN;
 	} else if (f32_isNaN(b)) {
-		return b.v;
+		return F32_CANONICAL_NAN;
 	} else if (f32_isInfinity(a) && !f32_isNegative(a)) {
 		return a.v;
 	} else if (f32_isInfinity(b) && !f32_isNegative(b)) {
