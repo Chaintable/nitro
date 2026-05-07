@@ -109,14 +109,14 @@ func ConfigAddOptions(prefix string, f *pflag.FlagSet) {
 //     count quota.
 //
 // The SQS queue should be configured with a small default visibility timeout
-// (e.g. 1-3 minutes) and a high max receive count (e.g. 300+). The visibility
-// timeout only needs to be long enough for a single forward attempt; the
-// worker-level slowdown handles rate limiting during outages. A small visibility
-// timeout ensures messages become available quickly once the endpoint recovers.
-// For example, with a visibility timeout of 2 minutes and a max receive count of
-// 300, the minimum retry window per message is 300 × 2 min = 600 min = 10 hours.
-// In practice the effective interval is longer because the worker slowdown spaces
-// out attempts, so the actual retry window will be considerably larger.
+// (e.g. 1-3 minutes), a max receive count (e.g. 150+), and a DLQ (dead-letter
+// queue) enabled so messages that exhaust the max receive count are captured
+// rather than lost. A small visibility timeout ensures messages become available
+// quickly once the endpoint recovers. For example, with a visibility timeout of
+// 2 minutes and a max receive count of 150, the minimum retry window per message is
+// 150 × 2 min = 300 min = 5 hours. In practice the effective interval is longer
+// because the worker slowdown spaces out attempts, so the actual retry window
+// will be larger.
 type Forwarder struct {
 	stopwaiter.StopWaiter
 	config            *Config
