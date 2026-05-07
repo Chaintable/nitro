@@ -405,8 +405,8 @@ func TestPrecheckerFilterManualRedeem(t *testing.T) {
 	report := externalEndpoint.NextReport(t)
 	checkPrecheckerReportFields(t, ctx, builder, report, redeemTx)
 	// Outer tx targets ArbRetryableTx; contractAddr surfaces via the scheduled inner retry through
-	// both paths simultaneously: the inner tx's To (ReasonRetryableTo) and a pushed contract frame
-	// during execution (ReasonContractAddress). Both must appear in the same report.
+	// both paths simultaneously: the inner tx's To (ReasonTo) and a pushed contract frame during
+	// execution (ReasonContractAddress). Both must appear in the same report.
 	reasons := make(map[filter.FilterReasonType]bool)
 	for _, rec := range report.FilteredAddresses {
 		if rec.Address != contractAddr {
@@ -416,7 +416,7 @@ func TestPrecheckerFilterManualRedeem(t *testing.T) {
 		require.Nil(t, rec.EventRuleMatch, "cascade reasons must not carry EventRuleMatch")
 	}
 	require.True(t, reasons[filter.ReasonContractAddress], "expected ReasonContractAddress, got %v", reasons)
-	require.True(t, reasons[filter.ReasonRetryableTo], "expected ReasonRetryableTo, got %v", reasons)
+	require.True(t, reasons[filter.ReasonTo], "expected ReasonTo, got %v", reasons)
 }
 
 // TestPrecheckerFilterContractTriggeredRedeem verifies that the forwarder's
