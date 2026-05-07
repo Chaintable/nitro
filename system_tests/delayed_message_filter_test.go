@@ -1315,9 +1315,33 @@ type retryableFilterTestParams struct {
 	builder            *NodeBuilder
 	ctx                context.Context
 	delayedInbox       *bridgegen.Inbox
-	lookupL2Tx         func(*types.Receipt) *types.Transaction
+	delayedBridge      *arbnode.DelayedBridge
 	filtererName       string
 	fundsRecipientAddr common.Address
+}
+
+// lookupRetryableSubmissionTx parses the L1 receipt's delayed message and returns
+// the unique ArbitrumSubmitRetryableTx it produced.
+func lookupRetryableSubmissionTx(t *testing.T, p *retryableFilterTestParams, l1Receipt *types.Receipt) *types.Transaction {
+	t.Helper()
+	messages, err := p.delayedBridge.LookupMessagesInRange(p.ctx, l1Receipt.BlockNumber, l1Receipt.BlockNumber, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, messages, "no delayed messages found")
+	var submissionTxs []*types.Transaction
+	for _, message := range messages {
+		if message.Message.Header.Kind != arbostypes.L1MessageType_SubmitRetryable {
+			continue
+		}
+		txs, err := arbos.ParseL2Transactions(message.Message, chaininfo.ArbitrumDevTestChainConfig().ChainID, params.MaxDebugArbosVersionSupported)
+		require.NoError(t, err)
+		for _, tx := range txs {
+			if tx.Type() == types.ArbitrumSubmitRetryableTxType {
+				submissionTxs = append(submissionTxs, tx)
+			}
+		}
+	}
+	require.Len(t, submissionTxs, 1, "expected exactly 1 retryable submission tx")
+	return submissionTxs[0]
 }
 
 // setupRetryableFilterTest sets up a node for retryable filtering tests.
@@ -1336,27 +1360,6 @@ func setupRetryableFilterTest(t *testing.T, ctx context.Context, setFundsRecipie
 
 	delayedBridge, err := arbnode.NewDelayedBridge(builder.L1.Client, builder.L1Info.GetAddress("Bridge"), 0)
 	require.NoError(t, err)
-
-	lookupL2Tx := func(l1Receipt *types.Receipt) *types.Transaction {
-		messages, err := delayedBridge.LookupMessagesInRange(ctx, l1Receipt.BlockNumber, l1Receipt.BlockNumber, nil)
-		require.NoError(t, err)
-		require.NotEmpty(t, messages, "no delayed messages found")
-		var submissionTxs []*types.Transaction
-		for _, message := range messages {
-			if message.Message.Header.Kind != arbostypes.L1MessageType_SubmitRetryable {
-				continue
-			}
-			txs, err := arbos.ParseL2Transactions(message.Message, chaininfo.ArbitrumDevTestChainConfig().ChainID, params.MaxDebugArbosVersionSupported)
-			require.NoError(t, err)
-			for _, tx := range txs {
-				if tx.Type() == types.ArbitrumSubmitRetryableTxType {
-					submissionTxs = append(submissionTxs, tx)
-				}
-			}
-		}
-		require.Len(t, submissionTxs, 1, "expected exactly 1 retryable submission tx")
-		return submissionTxs[0]
-	}
 
 	builder.L2Info.GenerateAccount("Filterer")
 	builder.L2Info.GenerateAccount("FundsRecipient")
@@ -1383,7 +1386,7 @@ func setupRetryableFilterTest(t *testing.T, ctx context.Context, setFundsRecipie
 		builder:            builder,
 		ctx:                ctx,
 		delayedInbox:       delayedInbox,
-		lookupL2Tx:         lookupL2Tx,
+		delayedBridge:      delayedBridge,
 		filtererName:       "Filterer",
 		fundsRecipientAddr: fundsRecipientAddr,
 	}, cleanup
@@ -1442,7 +1445,7 @@ func submitRetryableViaL1WithGasLimit(
 	require.NoError(t, err)
 	require.Equal(t, types.ReceiptStatusSuccessful, l1Receipt.Status)
 
-	l2Tx := p.lookupL2Tx(l1Receipt)
+	l2Tx := lookupRetryableSubmissionTx(t, p, l1Receipt)
 	return l1Receipt, l2Tx.Hash()
 }
 
@@ -2049,7 +2052,7 @@ func TestManualRedeemGroupRevert(t *testing.T) {
 	l1Receipt, err := builder.L1.EnsureTxSucceeded(l1tx)
 	require.NoError(t, err)
 
-	l2Tx := p.lookupL2Tx(l1Receipt)
+	l2Tx := lookupRetryableSubmissionTx(t, p, l1Receipt)
 	ticketId := l2Tx.Hash()
 	advanceL1ForDelayed(t, ctx, builder)
 
@@ -2171,7 +2174,7 @@ func TestDelayedManualRedeemGroupRevert(t *testing.T) {
 	l1Receipt, err := builder.L1.EnsureTxSucceeded(l1tx)
 	require.NoError(t, err)
 
-	l2Tx := p.lookupL2Tx(l1Receipt)
+	l2Tx := lookupRetryableSubmissionTx(t, p, l1Receipt)
 	ticketId := l2Tx.Hash()
 	advanceL1ForDelayed(t, ctx, builder)
 
@@ -2525,7 +2528,7 @@ func TestRetryableGroupRevertWithChainedRedeems(t *testing.T) {
 	l1ReceiptB, err := builder.L1.EnsureTxSucceeded(l1txB)
 	require.NoError(t, err)
 
-	l2TxB := p.lookupL2Tx(l1ReceiptB)
+	l2TxB := lookupRetryableSubmissionTx(t, p, l1ReceiptB)
 	ticketIdB := l2TxB.Hash()
 
 	// Process B's submission

@@ -15,12 +15,8 @@ import (
 	"github.com/ethereum/go-ethereum/arbitrum/filter"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/params"
 
 	"github.com/offchainlabs/nitro/arbnode"
-	"github.com/offchainlabs/nitro/arbos"
-	"github.com/offchainlabs/nitro/arbos/arbostypes"
-	"github.com/offchainlabs/nitro/cmd/chaininfo"
 	"github.com/offchainlabs/nitro/execution/gethexec"
 	"github.com/offchainlabs/nitro/execution/gethexec/addressfilter"
 	"github.com/offchainlabs/nitro/execution/gethexec/eventfilter"
@@ -167,28 +163,10 @@ func newPrecheckerRetryableParams(t *testing.T, ctx context.Context, builder *No
 	delayedBridge, err := arbnode.NewDelayedBridge(builder.L1.Client, builder.L1Info.GetAddress("Bridge"), 0)
 	require.NoError(t, err)
 	return &retryableFilterTestParams{
-		builder:      builder,
-		ctx:          ctx,
-		delayedInbox: delayedInbox,
-		lookupL2Tx: func(l1Receipt *types.Receipt) *types.Transaction {
-			messages, err := delayedBridge.LookupMessagesInRange(ctx, l1Receipt.BlockNumber, l1Receipt.BlockNumber, nil)
-			require.NoError(t, err)
-			require.NotEmpty(t, messages, "no delayed messages found")
-			for _, message := range messages {
-				if message.Message.Header.Kind != arbostypes.L1MessageType_SubmitRetryable {
-					continue
-				}
-				txs, err := arbos.ParseL2Transactions(message.Message, chaininfo.ArbitrumDevTestChainConfig().ChainID, params.MaxDebugArbosVersionSupported)
-				require.NoError(t, err)
-				for _, tx := range txs {
-					if tx.Type() == types.ArbitrumSubmitRetryableTxType {
-						return tx
-					}
-				}
-			}
-			t.Fatal("no retryable submission tx found in delayed messages")
-			return nil
-		},
+		builder:       builder,
+		ctx:           ctx,
+		delayedInbox:  delayedInbox,
+		delayedBridge: delayedBridge,
 	}
 }
 
@@ -363,7 +341,7 @@ func TestPrecheckerFilterEvents(t *testing.T) {
 	// Transfer to filtered address via forwarder should be rejected and reported with ReasonEventRule
 	auth = builder.L2Info.GetDefaultTransactOpts("Owner", ctx)
 	auth.GasLimit = 500_000 // skip EstimateGas, which would surface the filter before we get a tx to assert against
-	auth.NoSend = true
+	auth.NoSend = true      // build-only; explicit SendTransaction below captures the filter rejection
 	txFiltered, err := contractOnForwarder.EmitTransfer(&auth, auth.From, filteredAddr)
 	Require(t, err, "building EmitTransfer tx")
 	err = forwarder.Client.SendTransaction(ctx, txFiltered)
@@ -426,15 +404,19 @@ func TestPrecheckerFilterManualRedeem(t *testing.T) {
 
 	report := externalEndpoint.NextReport(t)
 	checkPrecheckerReportFields(t, ctx, builder, report, redeemTx)
-	rec := requireFilteredAddress(t, report, contractAddr)
-	// Outer tx targets ArbRetryableTx, not contractAddr — contractAddr only surfaces via the
-	// scheduled inner retry, where it appears as either the inner tx's To or as a pushed contract
-	// frame. Async workers determine which lands in the report first.
-	require.Contains(t,
-		[]filter.FilterReasonType{filter.ReasonTo, filter.ReasonContractAddress, filter.ReasonRetryableTo},
-		rec.Reason,
-		"scheduled redeem must surface filtered contract via the cascade path")
-	require.Nil(t, rec.EventRuleMatch)
+	// Outer tx targets ArbRetryableTx; contractAddr surfaces via the scheduled inner retry through
+	// both paths simultaneously: the inner tx's To (ReasonRetryableTo) and a pushed contract frame
+	// during execution (ReasonContractAddress). Both must appear in the same report.
+	reasons := make(map[filter.FilterReasonType]bool)
+	for _, rec := range report.FilteredAddresses {
+		if rec.Address != contractAddr {
+			continue
+		}
+		reasons[rec.Reason] = true
+		require.Nil(t, rec.EventRuleMatch, "cascade reasons must not carry EventRuleMatch")
+	}
+	require.True(t, reasons[filter.ReasonContractAddress], "expected ReasonContractAddress, got %v", reasons)
+	require.True(t, reasons[filter.ReasonRetryableTo], "expected ReasonRetryableTo, got %v", reasons)
 }
 
 // TestPrecheckerFilterContractTriggeredRedeem verifies that the forwarder's
@@ -582,7 +564,7 @@ func TestPrecheckerFilterContractCall(t *testing.T) {
 	Require(t, err)
 	auth := builder.L2Info.GetDefaultTransactOpts("Owner", ctx)
 	auth.GasLimit = 500_000 // skip EstimateGas, which would surface the filter via the forwarder's prechecker before we get a tx to assert against
-	auth.NoSend = true
+	auth.NoSend = true      // build-only; explicit SendTransaction below captures the filter rejection
 	tx, err := wrapperOnForwarder.CallTarget(&auth, filteredTargetAddr)
 	Require(t, err, "building CallTarget tx")
 	err = forwarder.Client.SendTransaction(ctx, tx)
