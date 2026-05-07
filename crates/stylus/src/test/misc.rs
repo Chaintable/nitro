@@ -7,8 +7,8 @@ use eyre::Result;
 use prover::{
     binary::parse,
     machine::{GlobalState, MachineStatus},
+    programs::{prelude::*, start::StartMover},
 };
-use prover::programs::{prelude::*, start::StartMover};
 use wasmer::{Function, imports, sys::Target};
 
 use super::test_configs;

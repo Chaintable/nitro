@@ -295,7 +295,10 @@ fn test_f32_demote_f64_nan_canonicalization() -> Result<()> {
     let (mut jit_store, jit) = jit_f32_from_f64_unop("f32.demote_f64")?;
     let jit_bits = call_i32_from_i64(&mut jit_store, &jit, "op", snan_f64)?;
 
-    assert_eq!(jit_bits, canonical_nan_f32, "JIT f32.demote_f64 should return canonical f32 NaN");
+    assert_eq!(
+        jit_bits, canonical_nan_f32,
+        "JIT f32.demote_f64 should return canonical f32 NaN"
+    );
     assert_eq!(
         soft_bits, canonical_nan_f32,
         "soft-float f32.demote_f64: got 0x{soft_bits:08x}, want canonical f32 NaN 0x{canonical_nan_f32:08x}"
@@ -316,7 +319,10 @@ fn test_f64_promote_f32_nan_canonicalization() -> Result<()> {
     let (mut jit_store, jit) = jit_f64_from_f32_unop("f64.promote_f32")?;
     let jit_bits = call_i64_from_i32(&mut jit_store, &jit, "op", snan_f32)?;
 
-    assert_eq!(jit_bits, canonical_nan_f64, "JIT f64.promote_f32 should return canonical f64 NaN");
+    assert_eq!(
+        jit_bits, canonical_nan_f64,
+        "JIT f64.promote_f32 should return canonical f64 NaN"
+    );
     assert_eq!(
         soft_bits, canonical_nan_f64,
         "soft-float f64.promote_f32: got 0x{soft_bits:016x}, want canonical f64 NaN 0x{canonical_nan_f64:016x}"
