@@ -9,7 +9,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"sort"
-	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -271,15 +271,10 @@ func TestForwarder_RetryableHTTPErrorSlowdown_AfterThreshold(t *testing.T) {
 }
 
 func TestForwarder_RetryableHTTPErrorSlowdown_ResetOnSuccess(t *testing.T) {
-	var mu sync.Mutex
-	callCount := 0
+	var callCount atomic.Int32
 	failUntil := 2 // first 2 calls fail, third succeeds
 	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		callCount++
-		n := callCount
-		mu.Unlock()
-		if n <= failUntil {
+		if int(callCount.Add(1)) <= failUntil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
@@ -292,7 +287,8 @@ func TestForwarder_RetryableHTTPErrorSlowdown_ResetOnSuccess(t *testing.T) {
 	rpcClient := stack.Attach()
 	t.Cleanup(func() { rpcClient.Close() })
 
-	reports := make([]addressfilter.FilteredTxReport, 3)
+	numMessages := failUntil + 1 // retryable failures + 1 success
+	reports := make([]addressfilter.FilteredTxReport, numMessages)
 	for i := range reports {
 		reports[i] = addressfilter.FilteredTxReport{
 			ID:                "",
@@ -316,11 +312,12 @@ func TestForwarder_RetryableHTTPErrorSlowdown_ResetOnSuccess(t *testing.T) {
 	ctx := t.Context()
 	var consecutiveRetryableErrors int
 
-	// Two retryable errors.
-	forwarder.pollAndForward(ctx, &consecutiveRetryableErrors)
-	forwarder.pollAndForward(ctx, &consecutiveRetryableErrors)
-	if consecutiveRetryableErrors != 2 {
-		t.Fatalf("expected 2 consecutive retryable errors, got %d", consecutiveRetryableErrors)
+	// Retryable errors.
+	for i := 0; i < failUntil; i++ {
+		forwarder.pollAndForward(ctx, &consecutiveRetryableErrors)
+	}
+	if consecutiveRetryableErrors != failUntil {
+		t.Fatalf("expected %d consecutive retryable errors, got %d", failUntil, consecutiveRetryableErrors)
 	}
 
 	// Success should reset counter.
@@ -331,15 +328,10 @@ func TestForwarder_RetryableHTTPErrorSlowdown_ResetOnSuccess(t *testing.T) {
 }
 
 func TestForwarder_RetryableHTTPErrorSlowdown_ResetOnNonRetryableError(t *testing.T) {
-	var mu sync.Mutex
-	callCount := 0
+	var callCount atomic.Int32
 	failRetryableUntil := 2 // first 2 calls return 500, third returns 400
 	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		callCount++
-		n := callCount
-		mu.Unlock()
-		if n <= failRetryableUntil {
+		if int(callCount.Add(1)) <= failRetryableUntil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
