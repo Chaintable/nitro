@@ -69,7 +69,7 @@ func NewTestForwarder(t *testing.T, queueClient *sqsclient.MockQueueClient, pois
 			URL:     endpointURL,
 			Timeout: genericconf.HTTPClientConfigDefault.Timeout,
 		},
-		ExternalEndpointRetryableHTTPErrorSlowdown: DefaultExternalEndpointRetryableHTTPErrorSlowdownConfig,
+		ExternalEndpointRetryableErrorSlowdown: DefaultExternalEndpointRetryableErrorSlowdownConfig,
 	}
 	var poisonQueue sqsclient.QueueClient
 	if poisonQueueClient != nil {

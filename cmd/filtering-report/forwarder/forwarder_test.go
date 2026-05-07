@@ -63,9 +63,9 @@ func TestForwarder_ForwardsMessages(t *testing.T) {
 
 	ctx := t.Context()
 	forwarder := NewTestForwarder(t, queueClient, nil, endpoint.URL())
-	var consecutiveRetryableHTTPErrors int
-	forwarder.pollAndForward(ctx, &consecutiveRetryableHTTPErrors)
-	forwarder.pollAndForward(ctx, &consecutiveRetryableHTTPErrors)
+	var consecutiveRetryableErrors int
+	forwarder.pollAndForward(ctx, &consecutiveRetryableErrors)
+	forwarder.pollAndForward(ctx, &consecutiveRetryableErrors)
 
 	received := []addressfilter.FilteredTxReport{
 		*endpoint.NextReport(t),
@@ -118,8 +118,8 @@ func TestForwarder_EndpointFailure_DoesNotDelete(t *testing.T) {
 
 	ctx := t.Context()
 	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL)
-	var consecutiveRetryableHTTPErrors int
-	forwarder.pollAndForward(ctx, &consecutiveRetryableHTTPErrors)
+	var consecutiveRetryableErrors int
+	forwarder.pollAndForward(ctx, &consecutiveRetryableErrors)
 
 	deleted := queueClient.DeletedReceiptHandles()
 	if len(deleted) != 0 {
@@ -138,8 +138,8 @@ func TestForwarder_EmptyQueue(t *testing.T) {
 	queueClient := &sqsclient.MockQueueClient{}
 
 	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL)
-	var consecutiveRetryableHTTPErrors int
-	interval := forwarder.pollAndForward(t.Context(), &consecutiveRetryableHTTPErrors)
+	var consecutiveRetryableErrors int
+	interval := forwarder.pollAndForward(t.Context(), &consecutiveRetryableErrors)
 
 	if externalEndpointServerCalled {
 		t.Fatal("expected no HTTP calls on empty queue")
@@ -164,8 +164,8 @@ func TestForwarder_ReceiveError(t *testing.T) {
 	}
 
 	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL)
-	var consecutiveRetryableHTTPErrors int
-	interval := forwarder.pollAndForward(t.Context(), &consecutiveRetryableHTTPErrors)
+	var consecutiveRetryableErrors int
+	interval := forwarder.pollAndForward(t.Context(), &consecutiveRetryableErrors)
 
 	if interval != forwarder.config.PollInterval {
 		t.Fatalf("expected poll interval %v on receive error, got %v", forwarder.config.PollInterval, interval)
@@ -200,8 +200,8 @@ func TestForwarder_DeleteError(t *testing.T) {
 	}
 
 	forwarder := NewTestForwarder(t, queueClient, nil, endpoint.URL())
-	var consecutiveRetryableHTTPErrors int
-	interval := forwarder.pollAndForward(t.Context(), &consecutiveRetryableHTTPErrors)
+	var consecutiveRetryableErrors int
+	interval := forwarder.pollAndForward(t.Context(), &consecutiveRetryableErrors)
 
 	received := endpoint.NextReport(t)
 	if received.TxHash != reports[0].TxHash {
@@ -228,7 +228,7 @@ func TestForwarder_RetryableHTTPErrorSlowdown_AfterThreshold(t *testing.T) {
 	t.Cleanup(func() { rpcClient.Close() })
 
 	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL)
-	threshold := forwarder.config.ExternalEndpointRetryableHTTPErrorSlowdown.ConsecutiveRetryableHTTPErrors
+	threshold := forwarder.config.ExternalEndpointRetryableErrorSlowdown.ConsecutiveRetryableErrors
 
 	// Enqueue enough messages to exceed the threshold.
 	reports := make([]addressfilter.FilteredTxReport, threshold)
@@ -252,19 +252,19 @@ func TestForwarder_RetryableHTTPErrorSlowdown_AfterThreshold(t *testing.T) {
 	}
 
 	ctx := t.Context()
-	var consecutiveRetryableHTTPErrors int
+	var consecutiveRetryableErrors int
 
 	// First threshold-1 errors should return 0 (immediate re-poll).
 	for i := 0; i < threshold-1; i++ {
-		interval := forwarder.pollAndForward(ctx, &consecutiveRetryableHTTPErrors)
+		interval := forwarder.pollAndForward(ctx, &consecutiveRetryableErrors)
 		if interval != 0 {
 			t.Fatalf("call %d: expected 0 before threshold, got %v", i+1, interval)
 		}
 	}
 
 	// The threshold-th error should trigger the slowdown.
-	interval := forwarder.pollAndForward(ctx, &consecutiveRetryableHTTPErrors)
-	expected := forwarder.config.ExternalEndpointRetryableHTTPErrorSlowdown.Duration
+	interval := forwarder.pollAndForward(ctx, &consecutiveRetryableErrors)
+	expected := forwarder.config.ExternalEndpointRetryableErrorSlowdown.Duration
 	if interval != expected {
 		t.Fatalf("expected slowdown duration %v at threshold, got %v", expected, interval)
 	}
@@ -314,19 +314,19 @@ func TestForwarder_RetryableHTTPErrorSlowdown_ResetOnSuccess(t *testing.T) {
 
 	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL)
 	ctx := t.Context()
-	var consecutiveRetryableHTTPErrors int
+	var consecutiveRetryableErrors int
 
 	// Two retryable errors.
-	forwarder.pollAndForward(ctx, &consecutiveRetryableHTTPErrors)
-	forwarder.pollAndForward(ctx, &consecutiveRetryableHTTPErrors)
-	if consecutiveRetryableHTTPErrors != 2 {
-		t.Fatalf("expected 2 consecutive retryable errors, got %d", consecutiveRetryableHTTPErrors)
+	forwarder.pollAndForward(ctx, &consecutiveRetryableErrors)
+	forwarder.pollAndForward(ctx, &consecutiveRetryableErrors)
+	if consecutiveRetryableErrors != 2 {
+		t.Fatalf("expected 2 consecutive retryable errors, got %d", consecutiveRetryableErrors)
 	}
 
 	// Success should reset counter.
-	forwarder.pollAndForward(ctx, &consecutiveRetryableHTTPErrors)
-	if consecutiveRetryableHTTPErrors != 0 {
-		t.Fatalf("expected counter reset to 0 after success, got %d", consecutiveRetryableHTTPErrors)
+	forwarder.pollAndForward(ctx, &consecutiveRetryableErrors)
+	if consecutiveRetryableErrors != 0 {
+		t.Fatalf("expected counter reset to 0 after success, got %d", consecutiveRetryableErrors)
 	}
 }
 
@@ -374,19 +374,19 @@ func TestForwarder_RetryableHTTPErrorSlowdown_ResetOnNonRetryableError(t *testin
 
 	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL)
 	ctx := t.Context()
-	var consecutiveRetryableHTTPErrors int
+	var consecutiveRetryableErrors int
 
 	// Two retryable errors.
-	forwarder.pollAndForward(ctx, &consecutiveRetryableHTTPErrors)
-	forwarder.pollAndForward(ctx, &consecutiveRetryableHTTPErrors)
-	if consecutiveRetryableHTTPErrors != 2 {
-		t.Fatalf("expected 2 consecutive retryable errors, got %d", consecutiveRetryableHTTPErrors)
+	forwarder.pollAndForward(ctx, &consecutiveRetryableErrors)
+	forwarder.pollAndForward(ctx, &consecutiveRetryableErrors)
+	if consecutiveRetryableErrors != 2 {
+		t.Fatalf("expected 2 consecutive retryable errors, got %d", consecutiveRetryableErrors)
 	}
 
 	// Non-retryable error should reset counter.
-	forwarder.pollAndForward(ctx, &consecutiveRetryableHTTPErrors)
-	if consecutiveRetryableHTTPErrors != 0 {
-		t.Fatalf("expected counter reset to 0 after non-retryable error, got %d", consecutiveRetryableHTTPErrors)
+	forwarder.pollAndForward(ctx, &consecutiveRetryableErrors)
+	if consecutiveRetryableErrors != 0 {
+		t.Fatalf("expected counter reset to 0 after non-retryable error, got %d", consecutiveRetryableErrors)
 	}
 }
 
@@ -402,7 +402,7 @@ func TestForwarder_RetryableHTTPErrorSlowdown_NonRetryableErrorDoesNotCount(t *t
 	t.Cleanup(func() { rpcClient.Close() })
 
 	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL)
-	threshold := forwarder.config.ExternalEndpointRetryableHTTPErrorSlowdown.ConsecutiveRetryableHTTPErrors
+	threshold := forwarder.config.ExternalEndpointRetryableErrorSlowdown.ConsecutiveRetryableErrors
 
 	reports := make([]addressfilter.FilteredTxReport, threshold+1)
 	for i := range reports {
@@ -425,17 +425,17 @@ func TestForwarder_RetryableHTTPErrorSlowdown_NonRetryableErrorDoesNotCount(t *t
 	}
 
 	ctx := t.Context()
-	var consecutiveRetryableHTTPErrors int
+	var consecutiveRetryableErrors int
 
 	// Even after many 400 errors, should never trigger slowdown.
 	for i := 0; i <= threshold; i++ {
-		interval := forwarder.pollAndForward(ctx, &consecutiveRetryableHTTPErrors)
+		interval := forwarder.pollAndForward(ctx, &consecutiveRetryableErrors)
 		if interval != 0 {
 			t.Fatalf("call %d: expected 0 for non-retryable error, got %v", i+1, interval)
 		}
 	}
-	if consecutiveRetryableHTTPErrors != 0 {
-		t.Fatalf("expected 0 consecutive retryable errors for non-retryable errors, got %d", consecutiveRetryableHTTPErrors)
+	if consecutiveRetryableErrors != 0 {
+		t.Fatalf("expected 0 consecutive retryable errors for non-retryable errors, got %d", consecutiveRetryableErrors)
 	}
 }
 
@@ -470,8 +470,8 @@ func TestForwarder_PoisonQueue_NonRetryableErrorSentToPoisonQueue(t *testing.T) 
 	}
 
 	forwarder := NewTestForwarder(t, queueClient, poisonQueueClient, externalEndpointServer.URL)
-	var consecutiveRetryableHTTPErrors int
-	forwarder.pollAndForward(t.Context(), &consecutiveRetryableHTTPErrors)
+	var consecutiveRetryableErrors int
+	forwarder.pollAndForward(t.Context(), &consecutiveRetryableErrors)
 
 	// Message should have been sent to poison queue.
 	sentBodies := poisonQueueClient.SentBodies()
@@ -519,8 +519,8 @@ func TestForwarder_PoisonQueue_SendFailureLeavesMessageInQueue(t *testing.T) {
 	}
 
 	forwarder := NewTestForwarder(t, queueClient, poisonQueueClient, externalEndpointServer.URL)
-	var consecutiveRetryableHTTPErrors int
-	forwarder.pollAndForward(t.Context(), &consecutiveRetryableHTTPErrors)
+	var consecutiveRetryableErrors int
+	forwarder.pollAndForward(t.Context(), &consecutiveRetryableErrors)
 
 	// Poison queue send failed, so message should NOT have been deleted from main queue.
 	deleted := queueClient.DeletedReceiptHandles()
