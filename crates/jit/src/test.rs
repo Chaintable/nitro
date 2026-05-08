@@ -92,6 +92,54 @@ fn call_i32_binop(
     }
 }
 
+fn jit_float_unop(op: &str) -> Result<(Store, Instance)> {
+    let wat = format!(
+        r#"(module
+               (func (export "op") (param i32) (result i32)
+                   (f32.reinterpret_i32 (local.get 0))
+                   ({op})
+                   (i32.reinterpret_f32)))"#
+    );
+    let wasm = wasmer::wat2wasm(wat.as_bytes())?.to_vec();
+    let mut store = make_jit_store();
+    let module = Module::new(&store, &wasm)?;
+    let instance = Instance::new(&mut store, &module, &imports! {})?;
+    Ok((store, instance))
+}
+
+fn jit_float64_unop(op: &str) -> Result<(Store, Instance)> {
+    let wat = format!(
+        r#"(module
+               (func (export "op") (param i64) (result i64)
+                   (f64.reinterpret_i64 (local.get 0))
+                   ({op})
+                   (i64.reinterpret_f64)))"#
+    );
+    let wasm = wasmer::wat2wasm(wat.as_bytes())?.to_vec();
+    let mut store = make_jit_store();
+    let module = Module::new(&store, &wasm)?;
+    let instance = Instance::new(&mut store, &module, &imports! {})?;
+    Ok((store, instance))
+}
+
+fn call_i32_unop(store: &mut Store, instance: &Instance, fname: &str, a: u32) -> Result<u32> {
+    let f = instance.exports.get_function(fname)?;
+    let res = f.call(store, &[Value::I32(a as i32)])?;
+    match res[0] {
+        Value::I32(x) => Ok(x as u32),
+        _ => bail!("expected i32 result"),
+    }
+}
+
+fn call_i64_unop(store: &mut Store, instance: &Instance, fname: &str, a: u64) -> Result<u64> {
+    let f = instance.exports.get_function(fname)?;
+    let res = f.call(store, &[Value::I64(a as i64)])?;
+    match res[0] {
+        Value::I64(x) => Ok(x as u64),
+        _ => bail!("expected i64 result"),
+    }
+}
+
 fn jit_f32_from_f64_unop(op: &str) -> Result<(Store, Instance)> {
     let wat = format!(
         r#"(module
@@ -352,5 +400,99 @@ fn test_f64_add_generated_nan_canonicalization() -> Result<()> {
         soft_bits, canonical_nan,
         "soft-float f64.add(+∞, -∞): got 0x{soft_bits:016x}, want canonical NaN 0x{canonical_nan:016x}"
     );
+    Ok(())
+}
+
+/// Both soft-float (WAVM) and JIT must return the canonical quiet NaN (0x7FC00000)
+/// from f32 unary operations (ceil, floor, trunc, nearest, sqrt) when the operand is a NaN.
+#[test]
+fn test_f32_unary_nan_canonicalization() -> Result<()> {
+    let snan: u32 = 0x7F800001;
+    let canonical_nan: u32 = 0x7FC00000;
+
+    for (jit_op, sf_name) in &[
+        ("f32.ceil",    "wavm__f32_ceil"),
+        ("f32.floor",   "wavm__f32_floor"),
+        ("f32.trunc",   "wavm__f32_trunc"),
+        ("f32.nearest", "wavm__f32_nearest"),
+        ("f32.sqrt",    "wavm__f32_sqrt"),
+    ] {
+        let (mut sf_store, sf) = load_soft_float()?;
+        let soft_bits = call_i32_unop(&mut sf_store, &sf, sf_name, snan)?;
+        let (mut jit_store, jit) = jit_float_unop(jit_op)?;
+        let jit_bits = call_i32_unop(&mut jit_store, &jit, "op", snan)?;
+        assert_eq!(jit_bits, canonical_nan, "JIT {jit_op}(sNaN) should return canonical NaN");
+        assert_eq!(soft_bits, canonical_nan, "soft-float {sf_name}(sNaN): got 0x{soft_bits:08x}, want 0x{canonical_nan:08x}");
+    }
+    Ok(())
+}
+
+/// Both soft-float (WAVM) and JIT must return the canonical quiet NaN (0x7FC00000)
+/// from f32 binary operations (sub, mul, div) when one operand is a NaN.
+#[test]
+fn test_f32_binary_nan_canonicalization() -> Result<()> {
+    let snan: u32 = 0x7F800001;
+    let one: u32 = 0x3F800000;
+    let canonical_nan: u32 = 0x7FC00000;
+
+    for (jit_op, sf_name) in &[
+        ("f32.sub", "wavm__f32_sub"),
+        ("f32.mul", "wavm__f32_mul"),
+        ("f32.div", "wavm__f32_div"),
+    ] {
+        let (mut sf_store, sf) = load_soft_float()?;
+        let soft_bits = call_i32_binop(&mut sf_store, &sf, sf_name, snan, one)?;
+        let (mut jit_store, jit) = jit_float_binop(jit_op)?;
+        let jit_bits = call_i32_binop(&mut jit_store, &jit, "op", snan, one)?;
+        assert_eq!(jit_bits, canonical_nan, "JIT {jit_op}(sNaN, 1.0) should return canonical NaN");
+        assert_eq!(soft_bits, canonical_nan, "soft-float {sf_name}(sNaN, 1.0): got 0x{soft_bits:08x}, want 0x{canonical_nan:08x}");
+    }
+    Ok(())
+}
+
+/// Both soft-float (WAVM) and JIT must return the canonical quiet NaN (0x7FF8000000000000)
+/// from f64 unary operations (ceil, floor, trunc, nearest, sqrt) when the operand is a NaN.
+#[test]
+fn test_f64_unary_nan_canonicalization() -> Result<()> {
+    let snan: u64 = 0x7FF0000000000001;
+    let canonical_nan: u64 = 0x7FF8000000000000;
+
+    for (jit_op, sf_name) in &[
+        ("f64.ceil",    "wavm__f64_ceil"),
+        ("f64.floor",   "wavm__f64_floor"),
+        ("f64.trunc",   "wavm__f64_trunc"),
+        ("f64.nearest", "wavm__f64_nearest"),
+        ("f64.sqrt",    "wavm__f64_sqrt"),
+    ] {
+        let (mut sf_store, sf) = load_soft_float()?;
+        let soft_bits = call_i64_unop(&mut sf_store, &sf, sf_name, snan)?;
+        let (mut jit_store, jit) = jit_float64_unop(jit_op)?;
+        let jit_bits = call_i64_unop(&mut jit_store, &jit, "op", snan)?;
+        assert_eq!(jit_bits, canonical_nan, "JIT {jit_op}(sNaN) should return canonical NaN");
+        assert_eq!(soft_bits, canonical_nan, "soft-float {sf_name}(sNaN): got 0x{soft_bits:016x}, want 0x{canonical_nan:016x}");
+    }
+    Ok(())
+}
+
+/// Both soft-float (WAVM) and JIT must return the canonical quiet NaN (0x7FF8000000000000)
+/// from f64 binary operations (sub, mul, div) when one operand is a NaN.
+#[test]
+fn test_f64_binary_nan_canonicalization() -> Result<()> {
+    let snan: u64 = 0x7FF0000000000001;
+    let one: u64 = 0x3FF0000000000000;
+    let canonical_nan: u64 = 0x7FF8000000000000;
+
+    for (jit_op, sf_name) in &[
+        ("f64.sub", "wavm__f64_sub"),
+        ("f64.mul", "wavm__f64_mul"),
+        ("f64.div", "wavm__f64_div"),
+    ] {
+        let (mut sf_store, sf) = load_soft_float()?;
+        let soft_bits = call_i64_binop(&mut sf_store, &sf, sf_name, snan, one)?;
+        let (mut jit_store, jit) = jit_float64_binop(jit_op)?;
+        let jit_bits = call_i64_binop(&mut jit_store, &jit, "op", snan, one)?;
+        assert_eq!(jit_bits, canonical_nan, "JIT {jit_op}(sNaN, 1.0) should return canonical NaN");
+        assert_eq!(soft_bits, canonical_nan, "soft-float {sf_name}(sNaN, 1.0): got 0x{soft_bits:016x}, want 0x{canonical_nan:016x}");
+    }
     Ok(())
 }

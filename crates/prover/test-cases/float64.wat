@@ -283,6 +283,59 @@
 	(i64.reinterpret_f64)
 	(call $assert_i64 (i64.const 0x7FF8000000000000))
 
+	;; unary ops: sNaN input must produce canonical NaN
+	(i64.const 0x7FF0000000000001)
+	(f64.reinterpret_i64)
+	(f64.ceil)
+	(i64.reinterpret_f64)
+	(call $assert_i64 (i64.const 0x7FF8000000000000))
+
+	(i64.const 0x7FF0000000000001)
+	(f64.reinterpret_i64)
+	(f64.floor)
+	(i64.reinterpret_f64)
+	(call $assert_i64 (i64.const 0x7FF8000000000000))
+
+	(i64.const 0x7FF0000000000001)
+	(f64.reinterpret_i64)
+	(f64.trunc)
+	(i64.reinterpret_f64)
+	(call $assert_i64 (i64.const 0x7FF8000000000000))
+
+	(i64.const 0x7FF0000000000001)
+	(f64.reinterpret_i64)
+	(f64.nearest)
+	(i64.reinterpret_f64)
+	(call $assert_i64 (i64.const 0x7FF8000000000000))
+
+	(i64.const 0x7FF0000000000001)
+	(f64.reinterpret_i64)
+	(f64.sqrt)
+	(i64.reinterpret_f64)
+	(call $assert_i64 (i64.const 0x7FF8000000000000))
+
+	;; binary ops: sNaN operand must produce canonical NaN
+	(i64.const 0x7FF0000000000001)
+	(f64.reinterpret_i64)
+	(f64.const 1)
+	(f64.sub)
+	(i64.reinterpret_f64)
+	(call $assert_i64 (i64.const 0x7FF8000000000000))
+
+	(i64.const 0x7FF0000000000001)
+	(f64.reinterpret_i64)
+	(f64.const 1)
+	(f64.mul)
+	(i64.reinterpret_f64)
+	(call $assert_i64 (i64.const 0x7FF8000000000000))
+
+	(i64.const 0x7FF0000000000001)
+	(f64.reinterpret_i64)
+	(f64.const 1)
+	(f64.div)
+	(i64.reinterpret_f64)
+	(call $assert_i64 (i64.const 0x7FF8000000000000))
+
 	(call $wavm_halt_and_set_finished)
 )
 
