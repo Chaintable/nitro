@@ -37,6 +37,7 @@ import (
 	"github.com/offchainlabs/nitro/broadcaster/message"
 	"github.com/offchainlabs/nitro/execution"
 	"github.com/offchainlabs/nitro/staker"
+	"github.com/offchainlabs/nitro/util"
 	"github.com/offchainlabs/nitro/util/arbmath"
 	"github.com/offchainlabs/nitro/util/sharedmetrics"
 	"github.com/offchainlabs/nitro/util/stopwaiter"
@@ -86,6 +87,11 @@ type TransactionStreamer struct {
 
 	trackBlockMetadataFrom arbutil.MessageIndex
 	syncTillMessage        arbutil.MessageIndex
+
+	// Throttles log spam on transient AccumulatorNotFoundErr in ExecuteNextMsg, which fires
+	// when the broadcast feed is briefly ahead of the inbox tracker. Single-goroutine access
+	// via the executeMessages loop, so no lock is needed.
+	accNotFoundErrHandler *util.EphemeralErrorHandler
 }
 
 type TransactionStreamerConfig struct {
@@ -143,6 +149,9 @@ func NewTransactionStreamer(
 		broadcastServer:    broadcastServer,
 		fatalErrChan:       fatalErrChan,
 		config:             config,
+		accNotFoundErrHandler: util.NewEphemeralErrorHandler(
+			5*time.Minute, AccumulatorNotFoundErr.Error(), time.Minute,
+		),
 	}
 	err := streamer.cleanupInconsistentState()
 	if err != nil {
@@ -1470,18 +1479,21 @@ func (s *TransactionStreamer) ExecuteNextMsg(ctx context.Context) bool {
 
 	msgAndBlockInfo, err := s.getMessageWithMetadataAndBlockInfo(msgIdxToExecute)
 	if err != nil {
-		log.Error("ExecuteNextMsg failed to readMessage", "err", err, "msgIdxToExecute", msgIdxToExecute)
+		s.accNotFoundErrHandler.LogLevel(err, log.Error)("ExecuteNextMsg failed to readMessage", "err", err, "msgIdxToExecute", msgIdxToExecute)
 		return false
 	}
 	var msgForPrefetch *arbostypes.MessageWithMetadata
 	if msgIdxToExecute+1 <= consensusHeadMsgIdx {
 		msg, err := s.GetMessage(msgIdxToExecute + 1)
 		if err != nil {
-			log.Error("ExecuteNextMsg failed to readMessage", "err", err, "msgIdxToExecute+1", msgIdxToExecute+1)
+			s.accNotFoundErrHandler.LogLevel(err, log.Error)("ExecuteNextMsg failed to readMessage", "err", err, "msgIdxToExecute+1", msgIdxToExecute+1)
 			return false
 		}
 		msgForPrefetch = msg
 	}
+	// Both reads succeeded; the inbox tracker is caught up. Reset here instead of
+	// at the end of the function so an early return doesn't leave a stale FirstOccurrence
+	s.accNotFoundErrHandler.Reset()
 	msgResult, err := s.exec.DigestMessage(msgIdxToExecute, &msgAndBlockInfo.MessageWithMeta, msgForPrefetch).Await(ctx)
 	if err != nil {
 		logger := log.Warn
