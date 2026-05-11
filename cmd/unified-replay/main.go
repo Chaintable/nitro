@@ -39,6 +39,7 @@ import (
 
 func main() {
 	melwavmio.StubInit()
+	defer melwavmio.StubFinal()
 	gethhook.RequireHookedGeth()
 
 	glogger := log.NewGlogHandler(
