@@ -3425,3 +3425,111 @@ impl Machine {
         }
     }
 }
+
+#[cfg(test)]
+mod global_state_hash_tests {
+    use super::*;
+
+    fn bytes32(byte: u8) -> Bytes32 {
+        let mut b = [0u8; 32];
+        b[0] = byte;
+        b.into()
+    }
+
+    // Recomputes hash() the way the pre-MEL 2-slot GlobalState did: always
+    // exactly two bytes32 followed by the u64 values. Every existing
+    // assertion proof was generated against this format, so hash() for a
+    // state with slots 2 and 3 zero must still match byte-for-byte.
+    fn legacy_two_slot_hash(gs: &GlobalState) -> Bytes32 {
+        let mut h = Keccak256::new();
+        h.update("Global state:");
+        h.update(gs.bytes32_vals[0]);
+        h.update(gs.bytes32_vals[1]);
+        for item in gs.u64_vals {
+            h.update(item.to_be_bytes());
+        }
+        h.finalize().into()
+    }
+
+    // Recomputes hash() including all 4 bytes32 slots unconditionally. Used
+    // as the golden vector for states where slot 3 is non-zero (so all four
+    // slots must be serialized).
+    fn full_four_slot_hash(gs: &GlobalState) -> Bytes32 {
+        let mut h = Keccak256::new();
+        h.update("Global state:");
+        for v in gs.bytes32_vals {
+            h.update(v);
+        }
+        for item in gs.u64_vals {
+            h.update(item.to_be_bytes());
+        }
+        h.finalize().into()
+    }
+
+    #[test]
+    fn all_zeros_matches_legacy_two_slot_layout() {
+        let gs = GlobalState::default();
+        assert_eq!(gs.bytes32_last_non_zero_index(), 1);
+        assert_eq!(gs.serialize().len(), 2 * 32 + 2 * 8);
+        assert_eq!(gs.hash(), legacy_two_slot_hash(&gs));
+    }
+
+    #[test]
+    fn only_slot_0_set_matches_legacy() {
+        let mut gs = GlobalState::default();
+        gs.bytes32_vals[0] = bytes32(0xAA);
+        gs.u64_vals = [7, 11];
+        assert_eq!(gs.bytes32_last_non_zero_index(), 1);
+        assert_eq!(gs.serialize().len(), 2 * 32 + 2 * 8);
+        assert_eq!(gs.hash(), legacy_two_slot_hash(&gs));
+    }
+
+    #[test]
+    fn only_slot_1_set_matches_legacy() {
+        let mut gs = GlobalState::default();
+        gs.bytes32_vals[1] = bytes32(0xBB);
+        gs.u64_vals = [42, 0];
+        assert_eq!(gs.bytes32_last_non_zero_index(), 1);
+        assert_eq!(gs.serialize().len(), 2 * 32 + 2 * 8);
+        assert_eq!(gs.hash(), legacy_two_slot_hash(&gs));
+    }
+
+    #[test]
+    fn slot_2_set_extends_serialization_and_preserves_intermediate_zeros() {
+        let mut gs = GlobalState::default();
+        gs.bytes32_vals[0] = bytes32(0x01);
+        // intermediate slot 1 left zero on purpose
+        gs.bytes32_vals[2] = bytes32(0x03);
+        gs.u64_vals = [1, 2];
+        assert_eq!(gs.bytes32_last_non_zero_index(), 2);
+        let bytes = gs.serialize();
+        assert_eq!(bytes.len(), 3 * 32 + 2 * 8);
+        // slot 1 (the intermediate zero) must still be present in the prefix
+        assert_eq!(&bytes[32..64], &[0u8; 32]);
+        // and slot 2 should appear next
+        assert_eq!(&bytes[64..96], gs.bytes32_vals[2].as_slice());
+    }
+
+    #[test]
+    fn slot_3_set_serializes_all_four_slots() {
+        let mut gs = GlobalState::default();
+        gs.bytes32_vals[0] = bytes32(0x01);
+        gs.bytes32_vals[3] = bytes32(0x04);
+        gs.u64_vals = [5, 9];
+        assert_eq!(gs.bytes32_last_non_zero_index(), 3);
+        assert_eq!(gs.serialize().len(), 4 * 32 + 2 * 8);
+        assert_eq!(gs.hash(), full_four_slot_hash(&gs));
+    }
+
+    #[test]
+    fn padded_legacy_state_hashes_equal_unpadded_legacy_state() {
+        // {a, b, 0, 0} must hash identically to the pre-MEL {a, b} layout —
+        // this is the backwards-compatibility invariant that every existing
+        // on-chain assertion depends on.
+        let mut gs = GlobalState::default();
+        gs.bytes32_vals[0] = bytes32(0xDE);
+        gs.bytes32_vals[1] = bytes32(0xAD);
+        gs.u64_vals = [123, 456];
+        assert_eq!(gs.hash(), legacy_two_slot_hash(&gs));
+    }
+}
