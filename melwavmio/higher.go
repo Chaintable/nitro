@@ -96,7 +96,7 @@ func SetEndMELRoot(hash common.Hash) {
 	setGlobalStateBytes32(IDX_MEL_ROOT, hashUnsafe)
 }
 
-// Note: if a GetSendRoot is ever modified, the validator will need to fill in the previous send root, which it currently does not.
+// Note: if SetSendRoot is ever modified to become conditional, the validator will need to fill in the previous send root, which it currently does not.
 func SetSendRoot(hash [32]byte) {
 	hashUnsafe := unsafe.Pointer(&hash[0])
 	setGlobalStateBytes32(IDX_SEND_ROOT, hashUnsafe)
