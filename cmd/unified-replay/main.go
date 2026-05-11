@@ -228,11 +228,11 @@ func readChainConfigFromLastBlock() *params.ChainConfig {
 	return chainConfig
 }
 
-// Runs a replay binary of message extraction for Arbitrum chains. Given a start and end parent chain
-// block hash, this program will extract all block header hashes in that range, and then run the
-// message extraction algorithm over those block headers, starting from a starting MEL state and processing
-// block headers one-by-one. At the end, a final MEL state is produced, and its hash is set into the
-// machine using a wavmio method.
+// Runs a replay binary of message extraction for Arbitrum chains. Given a starting MEL state and a
+// target parent-chain block hash, this program extracts all block header hashes from the block after
+// the start MEL state's parent-chain block up to and including targetBlockHash, then runs the message
+// extraction algorithm over those headers one-by-one. At the end, a final MEL state is produced, and
+// its hash is set into the machine using a wavmio method.
 func extractMessagesUpTo(
 	chainConfig *params.ChainConfig,
 	startState *mel.State,
