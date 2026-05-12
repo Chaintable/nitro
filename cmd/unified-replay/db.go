@@ -31,7 +31,6 @@ func (db PreimageDb) DeleteRange(start, end []byte) error {
 
 func (db PreimageDb) Get(key []byte) ([]byte, error) {
 	var hash [32]byte
-	copy(hash[:], key)
 	if len(key) == 32 {
 		copy(hash[:], key)
 	} else if len(key) == len(rawdb.CodePrefix)+32 && bytes.HasPrefix(key, rawdb.CodePrefix) {

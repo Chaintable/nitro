@@ -809,7 +809,7 @@ impl From<Function> for FunctionSerdeAll {
     }
 }
 
-// Globalstate holds:
+// GlobalState holds:
 // bytes32 - last_block_hash
 // bytes32 - send_root
 // bytes32 - mel_state_hash
@@ -862,10 +862,11 @@ impl GlobalState {
         }
         data
     }
-    /// Finds the last non-zero index in the bytes32 values and returns
-    /// the max of it and 1. This is used to determine how many
-    /// bytes32 values to include in the hash and serialization of a global state,
-    /// and at least the first two values must be included for backwards compatibility.
+    /// Returns the index of the last non-zero bytes32 value, or 1 if all values
+    /// past index 1 are zero (and 1 also when every value is zero). Always
+    /// returns at least 1, so the first two slots (block_hash, send_root) are
+    /// always serialized — preserving the pre-MEL GlobalState hash format for
+    /// backwards compatibility.
     fn bytes32_last_non_zero_index(&self) -> usize {
         let last_non_zero_idx = self
             .bytes32_vals
