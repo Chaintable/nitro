@@ -439,7 +439,7 @@ func mainImpl() int {
 		return 1
 	}
 
-	shouldValidate, err := nitroinit.ShouldValidateGenesisAssertion(l2BlockChain.CurrentBlock(), &nodeConfig.Init)
+	shouldValidate, err := nitroinit.ShouldValidateGenesisAssertion(l2BlockChain.CurrentBlock(), l2BlockChain.Genesis().Hash(), &nodeConfig.Init)
 	if err != nil {
 		log.Error("error checking whether to validate genesis assertion", "err", err)
 		return 1

@@ -1352,7 +1352,9 @@ func TestGetInitWithChainconfigInDB(t *testing.T) {
 
 func TestShouldValidateGenesisAssertion(t *testing.T) {
 	genesisHeader := &types.Header{Number: big.NewInt(0)}
+	genesisHash := genesisHeader.Hash()
 	pastGenesisHeader := &types.Header{Number: big.NewInt(1)}
+	mismatchedGenesisHeader := &types.Header{Number: big.NewInt(0), Extra: []byte("different")}
 
 	for _, tc := range []struct {
 		name       string
@@ -1365,11 +1367,12 @@ func TestShouldValidateGenesisAssertion(t *testing.T) {
 		{"head past genesis with flag enabled", pastGenesisHeader, true, false, false},
 		{"head at genesis with flag disabled", genesisHeader, false, false, false},
 		{"head past genesis with flag disabled", pastGenesisHeader, false, false, false},
+		{"head number zero but hash mismatched", mismatchedGenesisHeader, true, false, false},
 		{"nil header is fatal", nil, true, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &conf.InitConfig{ValidateGenesisAssertion: tc.cfgEnabled}
-			got, err := ShouldValidateGenesisAssertion(tc.header, cfg)
+			got, err := ShouldValidateGenesisAssertion(tc.header, genesisHash, cfg)
 			if tc.wantErr {
 				require.Error(t, err)
 			} else {

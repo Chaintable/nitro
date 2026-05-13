@@ -1147,11 +1147,11 @@ func getGenesisAssertionCreationInfo(ctx context.Context, rollupAddress common.A
 }
 
 // Only meaningful while head is at genesis.
-func ShouldValidateGenesisAssertion(currentBlock *types.Header, cfg *conf.InitConfig) (bool, error) {
+func ShouldValidateGenesisAssertion(currentBlock *types.Header, genesisHash common.Hash, cfg *conf.InitConfig) (bool, error) {
 	if currentBlock == nil {
 		return false, errors.New("failed to get current block when checking whether to validate genesis assertion")
 	}
-	return currentBlock.Number.Sign() == 0 && cfg.ValidateGenesisAssertion, nil
+	return currentBlock.Hash() == genesisHash && cfg.ValidateGenesisAssertion, nil
 }
 
 func GetAndValidateGenesisAssertion(ctx context.Context, l2BlockChain *core.BlockChain, initDataReader statetransfer.InitDataReader, rollupAddrs *chaininfo.RollupAddresses, l1Client *ethclient.Client) error {
