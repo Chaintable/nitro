@@ -145,6 +145,7 @@ func TxIndexerConfigAddOptions(prefix string, f *pflag.FlagSet) {
 }
 
 type TransactionFilteringConfig struct {
+	Enable                         bool                          `koanf:"enable"`
 	DisableDelayedSequencingFilter bool                          `koanf:"disable-delayed-sequencing-filter"`
 	EnableETHCallFilter            bool                          `koanf:"enable-ethcall-filter"`
 	EventFilter                    eventfilter.EventFilterConfig `koanf:"event-filter"`
@@ -157,8 +158,10 @@ func (c *TransactionFilteringConfig) Validate() error {
 	if err := c.EventFilter.Validate(); err != nil {
 		return fmt.Errorf("invalid event filter config: %w", err)
 	}
-	if err := c.AddressFilter.Validate(); err != nil {
-		return fmt.Errorf("error validating address-filter config: %w", err)
+	if c.Enable && c.AddressFilter.S3.Bucket != "" {
+		if err := c.AddressFilter.Validate(); err != nil {
+			return fmt.Errorf("error validating address-filter config: %w", err)
+		}
 	}
 	if err := c.TransactionFiltererRPCClient.Validate(); err != nil {
 		return fmt.Errorf("error validating transaction-filterer-rpc-client config: %w", err)
@@ -170,6 +173,7 @@ func (c *TransactionFilteringConfig) Validate() error {
 }
 
 var DefaultTransactionFilteringConfig = TransactionFilteringConfig{
+	Enable:                         false,
 	DisableDelayedSequencingFilter: false,
 	EnableETHCallFilter:            false,
 	EventFilter:                    eventfilter.DefaultEventFilterConfig,
@@ -179,8 +183,9 @@ var DefaultTransactionFilteringConfig = TransactionFilteringConfig{
 }
 
 func TransactionFilteringConfigAddOptions(prefix string, f *pflag.FlagSet) {
+	f.Bool(prefix+".enable", DefaultTransactionFilteringConfig.Enable, "enable address filter service and prechecker transaction filtering (on non-sequencer nodes)")
 	f.Bool(prefix+".disable-delayed-sequencing-filter", DefaultTransactionFilteringConfig.DisableDelayedSequencingFilter, "disable delayed sequencing filter")
-	f.Bool(prefix+".enable-ethcall-filter", DefaultTransactionFilteringConfig.EnableETHCallFilter, "enable address filtering for eth_estimateGas and eth_call")
+	f.Bool(prefix+".enable-ethcall-filter", DefaultTransactionFilteringConfig.EnableETHCallFilter, "enable address filtering for eth_estimateGas (eth_call bypasses gasestimator and is not filtered)")
 	EventFilterAddOptions(prefix+".event-filter", f)
 	addressfilter.ConfigAddOptions(prefix+".address-filter", f)
 	rpcclient.RPCClientAddOptions(prefix+".transaction-filterer-rpc-client", f, &DefaultTransactionFilteringConfig.TransactionFiltererRPCClient)
@@ -367,13 +372,19 @@ func CreateExecutionNode(
 	if err != nil {
 		return nil, err
 	}
-	addressFilterService, err := addressfilter.NewFilterService(&config.TransactionFiltering.AddressFilter)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create address filter service: %w", err)
-	}
+	var addressFilterService *addressfilter.FilterService
 	var addressChecker state.AddressChecker
-	if addressFilterService != nil {
-		addressChecker = addressFilterService.GetAddressChecker()
+	// Tests bypass the service by injecting via ExecEngine.SetAddressChecker.
+	if config.TransactionFiltering.Enable {
+		if config.TransactionFiltering.AddressFilter.S3.Bucket == "" {
+			log.Warn("transaction-filtering.enable is true but address-filter.s3.bucket is empty; no address-filter service will be created")
+		} else {
+			addressFilterService, err = addressfilter.NewFilterService(&config.TransactionFiltering.AddressFilter)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create address filter service: %w", err)
+			}
+			addressChecker = addressFilterService.GetAddressChecker()
+		}
 	}
 
 	var filteringReportRPCClient *FilteringReportRPCClient
@@ -434,7 +445,12 @@ func CreateExecutionNode(
 
 	txprecheckConfigFetcher := func() *TxPreCheckerConfig { return &configFetcher.Get().TxPreChecker }
 
-	txPreChecker := NewTxPreChecker(txPublisher, l2BlockChain, txprecheckConfigFetcher)
+	var precheckerFilterer core.TxFilterer
+	if config.TransactionFiltering.Enable {
+		precheckerFilterer = &txFilterer{execEngine: execEngine, eventFilter: eventFilter}
+	}
+
+	txPreChecker := NewTxPreChecker(txPublisher, l2BlockChain, txprecheckConfigFetcher, precheckerFilterer)
 	txPublisher = txPreChecker
 	arbInterface, err := NewArbInterface(l2BlockChain, txPublisher)
 	if err != nil {

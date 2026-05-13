@@ -63,22 +63,32 @@ func TxPreCheckerConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.Uint(prefix+".required-state-max-blocks", DefaultTxPreCheckerConfig.RequiredStateMaxBlocks, "maximum number of blocks to look back while looking for the <required-state-age> seconds old state, 0 = don't limit the search")
 }
 
+// TxPreChecker wraps a TransactionPublisher with pre-flight checks. A non-nil
+// txFilterer enables prechecker address filtering via the gasestimator dry-run.
 type TxPreChecker struct {
 	TransactionPublisher
 	bc                 *core.BlockChain
 	config             TxPreCheckerConfigFetcher
 	expressLaneTracker *timeboost.ExpressLaneTracker
 	backend            core.NodeInterfaceBackendAPI
+	txFilterer         core.TxFilterer
 }
 
 func NewTxPreChecker(
 	publisher TransactionPublisher,
 	bc *core.BlockChain,
-	config TxPreCheckerConfigFetcher) *TxPreChecker {
+	config TxPreCheckerConfigFetcher,
+	txFilterer core.TxFilterer,
+) *TxPreChecker {
+	// Sequencer filters via block-production hooks; skip prechecker dry-run.
+	if _, isSequencer := publisher.(*Sequencer); isSequencer {
+		txFilterer = nil
+	}
 	return &TxPreChecker{
 		TransactionPublisher: publisher,
 		bc:                   bc,
 		config:               config,
+		txFilterer:           txFilterer,
 	}
 }
 
@@ -299,7 +309,7 @@ func (c *TxPreChecker) SetExpressLaneTracker(tracker *timeboost.ExpressLaneTrack
 }
 
 func (c *TxPreChecker) checkFilteredAddresses(ctx context.Context, tx *types.Transaction, header *types.Header) error {
-	if c.backend == nil || c.backend.TxFilter() == nil || c.config().Strictness < TxPreCheckerStrictnessAlwaysCompatible {
+	if c.txFilterer == nil || c.backend == nil || c.config().Strictness < TxPreCheckerStrictnessAlwaysCompatible {
 		return nil
 	}
 	statedb, err := c.bc.StateAt(header.Root)
@@ -322,6 +332,7 @@ func (c *TxPreChecker) checkFilteredAddresses(ctx context.Context, tx *types.Tra
 		State:            statedb,
 		Backend:          c.backend,
 		RunScheduledTxes: retryables.RunScheduledTxes,
+		TxFilterer:       c.txFilterer,
 	})
 	if errors.Is(err, state.ErrArbTxFilter) {
 		return err
