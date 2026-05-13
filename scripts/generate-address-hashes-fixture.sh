@@ -10,7 +10,7 @@
 #   sha256(salt_uuid_string + "::0x" + lowercase_addr_hex)
 # (mirrors execution/gethexec/addressfilter/hash_store.go: HashWithPrefix /
 # GetHashInputPrefix). The remainder is filler: zero-padded sequential
-# counters formatted as 64-hex strings ({"hash":"0x000...001"}, ...),
+# counters formatted as 64-hex strings ("0x000...001", "0x000...002", ...),
 # emitted in parallel by 8 awk workers writing to per-chunk temp files,
 # then concatenated.
 #
@@ -218,9 +218,11 @@ REAL_COUNT=${#REAL_ADDRESSES[@]}
 # ---------------------------------------------------------------------------
 if [[ -n "$SEED" ]]; then
     ID=$(seeded_uuid "id")
+    EXTRACT_UUID=$(seeded_uuid "extract_uuid")
     SALT=$(seeded_uuid "salt")
 else
     ID=$(lower_uuid)
+    EXTRACT_UUID=$(lower_uuid)
     SALT=$(lower_uuid)
 fi
 
@@ -246,14 +248,14 @@ done
 # Filler count from byte arithmetic.
 #
 # Layout (no whitespace between entries):
-#   header               135 bytes  ({"id":"<36>","salt":"<36>","hashing_scheme":"Sha256","address_hashes":[)
-#   each non-final hash   78 bytes  ({"hash":"0x<64hex>"},)
-#   final hash            77 bytes  ({"hash":"0x<64hex>"})
+#   header               155 bytes  ({"id":"<36>","extract_uuid":"<36>","salt":"<36>","hashes":[)
+#   each non-final hash   69 bytes  ("0x<64hex>",)
+#   final hash            68 bytes  ("0x<64hex>")
 #   footer                 2 bytes  (]})
 #
-#   total = 135 + 78*(N-1) + 77 + 2 = 136 + 78*N
+#   total = 155 + 69*(N-1) + 68 + 2 = 156 + 69*N
 # ---------------------------------------------------------------------------
-TOTAL_HASHES=$(( (TARGET_BYTES - 136) / 78 ))
+TOTAL_HASHES=$(( (TARGET_BYTES - 156) / 69 ))
 FILLER_COUNT=$(( TOTAL_HASHES - REAL_COUNT ))
 
 if (( FILLER_COUNT < 1 )); then
@@ -271,7 +273,7 @@ if (( JOBS > BULK_COUNT && BULK_COUNT > 0 )); then JOBS=$BULK_COUNT; fi
 # Parallel filler generation
 #
 # Each worker writes its slice of the counter range to a temp file as
-#   {"hash":"0x<64-zero-padded-counter>"},{"hash":"0x<...>"},...,
+#   "0x<64-zero-padded-counter>","0x<...>",..."0x<...>",
 # (every entry followed by a comma — final no-comma entry is written by the
 # main process). Counters are simple sequence values, never colliding with
 # real sha256 hashes (collision probability ~2^-240). The temp directory
@@ -293,7 +295,7 @@ for (( k=0; k<JOBS; k++ )); do
     fi
     chunk_file=$(printf '%s/chunk.%03d' "$TMPDIR_RUN" "$k")
     awk -v start="$next_start" -v n="$count" '
-        BEGIN { for (i = 0; i < n; i++) printf "{\"hash\":\"0x%064x\"},", start + i }
+        BEGIN { for (i = 0; i < n; i++) printf "\"0x%064x\",", start + i }
     ' > "$chunk_file" &
     PIDS+=("$!")
     next_start=$(( next_start + count ))
@@ -321,11 +323,11 @@ OUT_PATH="$OUT"
 mkdir -p "$(dirname "$OUT_PATH")"
 
 {
-    printf '{"id":"%s","salt":"%s","hashing_scheme":"Sha256","address_hashes":[' \
-        "$ID" "$SALT"
+    printf '{"id":"%s","extract_uuid":"%s","salt":"%s","hashes":[' \
+        "$ID" "$EXTRACT_UUID" "$SALT"
 
     for h in "${REAL_HASHES[@]}"; do
-        printf '{"hash":"0x%s"},' "$h"
+        printf '"0x%s",' "$h"
     done
 
     for (( k=0; k<JOBS; k++ )); do
@@ -333,7 +335,7 @@ mkdir -p "$(dirname "$OUT_PATH")"
         cat "$chunk_file"
     done
 
-    printf '{"hash":"0x%064x"}' "$LAST_COUNTER"
+    printf '"0x%064x"' "$LAST_COUNTER"
     printf ']}'
 } > "$OUT_PATH"
 
@@ -341,14 +343,15 @@ mkdir -p "$(dirname "$OUT_PATH")"
 # Summary
 # ---------------------------------------------------------------------------
 ACTUAL_SIZE=$(file_size "$OUT_PATH")
-EXPECTED_SIZE=$(( 136 + 78 * TOTAL_HASHES ))
+EXPECTED_SIZE=$(( 156 + 69 * TOTAL_HASHES ))
 
 printf '\n'
 printf 'wrote: %s\n' "$OUT_PATH"
 printf 'size : %s bytes (target %s, expected %s)\n' "$ACTUAL_SIZE" "$TARGET_BYTES" "$EXPECTED_SIZE"
 printf 'count: %s hashes (%s real + %s filler)\n' "$TOTAL_HASHES" "$REAL_COUNT" "$FILLER_COUNT"
-printf 'id  : %s\n' "$ID"
-printf 'salt: %s\n' "$SALT"
+printf 'id          : %s\n' "$ID"
+printf 'extract_uuid: %s\n' "$EXTRACT_UUID"
+printf 'salt        : %s\n' "$SALT"
 printf '\n'
 printf 'real (address -> hash):\n'
 for i in "${!REAL_ADDRESSES[@]}"; do
