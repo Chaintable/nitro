@@ -445,7 +445,12 @@ func mainImpl() int {
 		return 1
 	}
 
-	if initDataReader != nil && nodeConfig.Init.ValidateGenesisAssertion {
+	shouldValidate, err := nitroinit.ShouldValidateGenesisAssertion(l2BlockChain.CurrentBlock(), l2BlockChain.Genesis().Hash(), &nodeConfig.Init)
+	if err != nil {
+		log.Error("error checking whether to validate genesis assertion", "err", err)
+		return 1
+	}
+	if shouldValidate {
 		if err = nitroinit.GetAndValidateGenesisAssertion(ctx, l2BlockChain, initDataReader, &rollupAddrs, l1Client); err != nil {
 			log.Error("error trying to validate genesis assertion", "err", err)
 			if !nodeConfig.Init.Force {
