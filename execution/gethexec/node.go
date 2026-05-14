@@ -185,7 +185,7 @@ var DefaultTransactionFilteringConfig = TransactionFilteringConfig{
 func TransactionFilteringConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.Bool(prefix+".enable", DefaultTransactionFilteringConfig.Enable, "enable address filter service and prechecker transaction filtering (on non-sequencer nodes)")
 	f.Bool(prefix+".disable-delayed-sequencing-filter", DefaultTransactionFilteringConfig.DisableDelayedSequencingFilter, "disable delayed sequencing filter")
-	f.Bool(prefix+".enable-ethcall-filter", DefaultTransactionFilteringConfig.EnableETHCallFilter, "enable address filtering for eth_estimateGas (eth_call bypasses gasestimator and is not filtered)")
+	f.Bool(prefix+".enable-ethcall-filter", DefaultTransactionFilteringConfig.EnableETHCallFilter, "enable address filtering for eth_estimateGas and eth_call")
 	EventFilterAddOptions(prefix+".event-filter", f)
 	addressfilter.ConfigAddOptions(prefix+".address-filter", f)
 	rpcclient.RPCClientAddOptions(prefix+".transaction-filterer-rpc-client", f, &DefaultTransactionFilteringConfig.TransactionFiltererRPCClient)
