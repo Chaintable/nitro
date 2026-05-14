@@ -17,6 +17,12 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 ### Changed
 
 - Set default `EnableETHCallFilter` to false.
+- Update address-filter S3 hash list format
+- Ensure genesis block is appropriately validated
+
+### Fixed
+
+- Resolve BoLD Staking Bug That Attempts Self-Challenge
 
 ## [v3.10.0](https://github.com/OffchainLabs/nitro/compare/v3.10.0-rc.9...v3.10.0) - 2026-05-05
 
