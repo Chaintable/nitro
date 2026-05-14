@@ -86,20 +86,47 @@ func (m *Manager) awaitPostingSignal(ctx context.Context) {
 	}
 }
 
-// advanceChainPointer reads the creation info for the given assertion and
-// updates the local chain tracking state so subsequent posting attempts
-// build on top of it.
-func (m *Manager) advanceChainPointer(ctx context.Context, assertionId protocol.AssertionHash) error {
+// recordAgreedAssertion adds an assertion we agree with to canonicalAssertions
+// and, if it's a direct child of latestAgreedAssertion, advances the cursor to
+// it. The conditional advance prevents the slow catchup goroutine from
+// downgrading latestAgreedAssertion after sync has already moved past — a
+// downgrade would cause subsequent sync chunks to skip agreement checks and
+// fire the rival path against our own canonical assertions. Parent-hash
+// equality (not InboxMaxCount comparison) is required because overflow
+// assertions share InboxMaxCount with their parent.
+func (m *Manager) recordAgreedAssertion(ctx context.Context, assertionId protocol.AssertionHash) error {
 	creationInfo, err := m.chain.ReadAssertionCreationInfo(ctx, assertionId)
 	if err != nil {
 		return fmt.Errorf("could not read creation info for assertion %#x: %w", assertionId.Hash, err)
 	}
-	m.assertionChainData.Lock()
-	m.assertionChainData.latestAgreedAssertion = assertionId
-	m.assertionChainData.canonicalAssertions[assertionId] = creationInfo
-	m.assertionChainData.Unlock()
-	m.submittedAssertions.Insert(assertionId)
+	m.applyRecordAgreedAssertion(creationInfo)
 	return nil
+}
+
+// applyRecordAgreedAssertion is the lock-side of recordAgreedAssertion, split
+// out so the parent-linkage invariant can be exercised in unit tests without
+// an on-chain ReadAssertionCreationInfo round-trip.
+func (m *Manager) applyRecordAgreedAssertion(creationInfo *protocol.AssertionCreatedInfo) {
+	m.assertionChainData.Lock()
+	defer m.assertionChainData.Unlock()
+	m.assertionChainData.canonicalAssertions[creationInfo.AssertionHash] = creationInfo
+	if creationInfo.ParentAssertionHash == m.assertionChainData.latestAgreedAssertion {
+		m.assertionChainData.latestAgreedAssertion = creationInfo.AssertionHash
+	} else {
+		// Skip path: a slow catchup write landed after sync already advanced
+		// the cursor past this assertion (or wrote a fork). The cursor stays
+		// put — that's the fix — but we surface a signal so the silent skip
+		// isn't indistinguishable from "validator stuck for some other reason."
+		assertionPointerSkipNonChildCounter.Inc(1)
+		log.Debug(
+			"applyRecordAgreedAssertion: not advancing latestAgreedAssertion because supplied assertion is not its direct child",
+			"assertionHash", creationInfo.AssertionHash,
+			"parentAssertionHash", creationInfo.ParentAssertionHash,
+			"latestAgreedAssertion", m.assertionChainData.latestAgreedAssertion,
+			"validatorName", m.validatorName,
+		)
+	}
+	m.submittedAssertions.Insert(creationInfo.AssertionHash)
 }
 
 // PostAssertion differs depending on whether or not the validator is currently staked.
@@ -149,7 +176,7 @@ func (m *Manager) PostAssertion(ctx context.Context) (option.Option[protocol.Ass
 				// The assertion we tried to post already exists onchain.
 				// Advance our local chain pointer and loop to try the next assertion.
 				existingId := assertionOpt.Unwrap().Id()
-				if err := m.advanceChainPointer(ctx, existingId); err != nil {
+				if err := m.recordAgreedAssertion(ctx, existingId); err != nil {
 					return none, err
 				}
 				m.sendToConfirmationQueue(existingId, "PostAssertion-catchup")
@@ -167,7 +194,7 @@ func (m *Manager) PostAssertion(ctx context.Context) (option.Option[protocol.Ass
 		// Note: sendToConfirmationQueue is already called inside PostAssertionBasedOnParent
 		// for newly posted assertions, so we don't call it again here.
 		if assertionOpt.IsSome() {
-			if err := m.advanceChainPointer(ctx, assertionOpt.Unwrap().Id()); err != nil {
+			if err := m.recordAgreedAssertion(ctx, assertionOpt.Unwrap().Id()); err != nil {
 				return none, err
 			}
 		}
