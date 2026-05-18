@@ -155,13 +155,17 @@ type TransactionFilteringConfig struct {
 }
 
 func (c *TransactionFilteringConfig) Validate() error {
+	if !c.Enable {
+		return nil
+	}
+	if c.AddressFilter.S3.Bucket == "" {
+		return errors.New("transaction-filtering.address-filter.s3.bucket required when transaction-filtering.enable=true")
+	}
 	if err := c.EventFilter.Validate(); err != nil {
 		return fmt.Errorf("invalid event filter config: %w", err)
 	}
-	if c.Enable && c.AddressFilter.S3.Bucket != "" {
-		if err := c.AddressFilter.Validate(); err != nil {
-			return fmt.Errorf("error validating address-filter config: %w", err)
-		}
+	if err := c.AddressFilter.Validate(); err != nil {
+		return fmt.Errorf("error validating address-filter config: %w", err)
 	}
 	if err := c.TransactionFiltererRPCClient.Validate(); err != nil {
 		return fmt.Errorf("error validating transaction-filterer-rpc-client config: %w", err)
@@ -376,15 +380,11 @@ func CreateExecutionNode(
 	var addressChecker state.AddressChecker
 	// Tests bypass the service by injecting via ExecEngine.SetAddressChecker.
 	if config.TransactionFiltering.Enable {
-		if config.TransactionFiltering.AddressFilter.S3.Bucket == "" {
-			log.Warn("transaction-filtering.enable is true but address-filter.s3.bucket is empty; no address-filter service will be created")
-		} else {
-			addressFilterService, err = addressfilter.NewFilterService(&config.TransactionFiltering.AddressFilter)
-			if err != nil {
-				return nil, fmt.Errorf("failed to create address filter service: %w", err)
-			}
-			addressChecker = addressFilterService.GetAddressChecker()
+		addressFilterService, err = addressfilter.NewFilterService(&config.TransactionFiltering.AddressFilter)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create address filter service: %w", err)
 		}
+		addressChecker = addressFilterService.GetAddressChecker()
 	}
 
 	var filteringReportRPCClient *FilteringReportRPCClient

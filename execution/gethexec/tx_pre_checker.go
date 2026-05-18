@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"testing"
 	"time"
 
 	"github.com/spf13/pflag"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/offchainlabs/nitro/arbos/arbosState"
 	"github.com/offchainlabs/nitro/arbos/l1pricing"
+	"github.com/offchainlabs/nitro/execution/gethexec/eventfilter"
 	"github.com/offchainlabs/nitro/timeboost"
 	"github.com/offchainlabs/nitro/util/arbmath"
 	"github.com/offchainlabs/nitro/util/headerreader"
@@ -63,15 +65,14 @@ func TxPreCheckerConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.Uint(prefix+".required-state-max-blocks", DefaultTxPreCheckerConfig.RequiredStateMaxBlocks, "maximum number of blocks to look back while looking for the <required-state-age> seconds old state, 0 = don't limit the search")
 }
 
-// TxPreChecker wraps a TransactionPublisher with pre-flight checks. A non-nil
-// txFilterer enables prechecker address filtering via the gasestimator dry-run.
 type TxPreChecker struct {
 	TransactionPublisher
 	bc                 *core.BlockChain
 	config             TxPreCheckerConfigFetcher
 	expressLaneTracker *timeboost.ExpressLaneTracker
 	backend            core.NodeInterfaceBackendAPI
-	txFilterer         core.TxFilterer
+	// nil disables prechecker address-filter dry-run (e.g. on sequencer nodes).
+	txFilterer core.TxFilterer
 }
 
 func NewTxPreChecker(
@@ -90,6 +91,10 @@ func NewTxPreChecker(
 		config:               config,
 		txFilterer:           txFilterer,
 	}
+}
+
+func (c *TxPreChecker) SetTxFiltererForTest(_ *testing.T, execEngine *ExecutionEngine, ef *eventfilter.EventFilter) {
+	c.txFilterer = &txFilterer{execEngine: execEngine, eventFilter: ef}
 }
 
 func (c *TxPreChecker) SetAPIBackend(backend core.NodeInterfaceBackendAPI) {
