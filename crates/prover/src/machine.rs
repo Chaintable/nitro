@@ -10,21 +10,16 @@ use std::{
     fs::File,
     hash::Hash,
     io::{BufReader, BufWriter, Write},
-    num::Wrapping,
-    ops::Add,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 use arbutil::{Bytes32, Color, DebugColor, PreimageType, crypto, math};
 use brotli::Dictionary;
-#[cfg(feature = "native")]
-use c_kzg::BYTES_PER_BLOB;
 use digest::Digest;
 use eyre::{Result, WrapErr, bail, ensure, eyre};
 use fnv::FnvHashMap as HashMap;
 use lazy_static::lazy_static;
-use num::{Zero, traits::PrimInt};
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -33,9 +28,20 @@ use sha3::Keccak256;
 use smallvec::SmallVec;
 use wasmer_types::FunctionIndex;
 use wasmparser::{DataKind, ElementItems, ElementKind, Operator, RefType, TableType};
-
 #[cfg(feature = "native")]
-use crate::kzg::prove_kzg_preimage;
+use {
+    crate::{
+        kzg::prove_kzg_preimage,
+        programs::meter::MeteredMachine,
+        reinterpret::{ReinterpretAsSigned, ReinterpretAsUnsigned},
+        value::IntegerValType,
+        wavm::{IBinOpType, IRelOpType, IUnOpType, unpack_cross_module_call},
+    },
+    c_kzg::BYTES_PER_BLOB,
+    num::{Zero, traits::PrimInt},
+    std::{num::Wrapping, ops::Add},
+};
+
 use crate::{
     binary::{
         self, ExportKind, ExportMap, FloatInstruction, Local, NameCustomSection, WasmBinary, parse,
@@ -43,14 +49,10 @@ use crate::{
     host,
     memory::Memory,
     merkle::{Merkle, MerkleType},
-    programs::{ModuleMod, StylusData, config::CompileConfig, meter::MeteredMachine},
-    reinterpret::{ReinterpretAsSigned, ReinterpretAsUnsigned},
+    programs::{ModuleMod, StylusData, config::CompileConfig},
     utils::{CBytes, RemoteTableType, file_bytes},
-    value::{ArbValueType, FunctionType, IntegerValType, ProgramCounter, Value},
-    wavm::{
-        self, FloatingPointImpls, IBinOpType, IRelOpType, IUnOpType, Instruction, Opcode,
-        pack_cross_module_call, unpack_cross_module_call, wasm_to_wavm,
-    },
+    value::{ArbValueType, FunctionType, ProgramCounter, Value},
+    wavm::{self, FloatingPointImpls, Instruction, Opcode, pack_cross_module_call, wasm_to_wavm},
 };
 
 #[cfg(feature = "counters")]
@@ -165,6 +167,7 @@ impl Function {
         func
     }
 
+    #[cfg(feature = "native")]
     const CHUNK_SIZE: usize = 64;
 
     fn set_code_merkle(&mut self) {
@@ -181,6 +184,7 @@ impl Function {
         self.code_merkle = Merkle::new(MerkleType::Instruction, code_hashes);
     }
 
+    #[cfg(feature = "native")]
     fn serialize_body_for_proof(&self, pc: ProgramCounter) -> Vec<u8> {
         let start = pc.inst() / 64 * 64;
         let end = (start + 64).min(self.code.len());
@@ -220,6 +224,7 @@ impl StackFrame {
         h.finalize().into()
     }
 
+    #[cfg(feature = "native")]
     fn serialize_for_proof(&self) -> Vec<u8> {
         let mut data = Vec::new();
         data.extend(self.return_ref.serialize_for_proof());
@@ -272,6 +277,7 @@ pub(crate) struct Table {
 }
 
 impl Table {
+    #[cfg(feature = "native")]
     fn serialize_for_proof(&self) -> Result<Vec<u8>> {
         let mut data = vec![ArbValueType::try_from(self.ty.element_type)?.serialize()];
         data.extend((self.elems.len() as u64).to_be_bytes());
@@ -360,6 +366,7 @@ impl Module {
         allow_hostapi: bool,
         debug_funcs: bool,
         stylus_data: Option<StylusData>,
+        version: u16,
     ) -> Result<Module> {
         let mut code = Vec::new();
         let mut func_type_idxs: Vec<u32> = Vec::new();
@@ -439,7 +446,7 @@ impl Module {
             .map(|(name, (offset, _))| (name.to_owned(), *offset))
             .collect();
 
-        let internals = host::new_internal_funcs(stylus_data);
+        let internals = host::new_internal_funcs(stylus_data, version);
         let internals_offset = (code.len() + bin.codes.len()) as u32;
         let internals_types = internals.iter().map(|f| f.ty.clone());
 
@@ -486,7 +493,7 @@ impl Module {
         if let Some(limits) = bin.memories.first() {
             let page_size = Memory::PAGE_SIZE;
             let initial = limits.initial; // validate() checks this is less than max::u32
-            let allowed = u32::MAX as u64 / Memory::PAGE_SIZE - 1; // we require the size remain *below* 2^32
+            let allowed = Memory::MAX_WASM_PAGES;
 
             let max_size = match limits.maximum {
                 Some(pages) => u64::min(allowed, pages),
@@ -621,6 +628,7 @@ impl Module {
         bin: &WasmBinary,
         debug_funcs: bool,
         stylus_data: Option<StylusData>,
+        version: u16,
     ) -> Result<Module> {
         Self::from_binary(
             bin,
@@ -629,6 +637,7 @@ impl Module {
             false,
             debug_funcs,
             stylus_data,
+            version,
         )
     }
 
@@ -661,6 +670,7 @@ impl Module {
         h.finalize().into()
     }
 
+    #[cfg(feature = "native")]
     fn serialize_for_proof(&self, mem_merkle: &Merkle) -> Vec<u8> {
         let mut data = Vec::new();
 
@@ -845,6 +855,7 @@ impl GlobalState {
         h.finalize().into()
     }
 
+    #[cfg(feature = "native")]
     fn serialize(&self) -> Vec<u8> {
         let mut data = Vec::new();
         for item in self.bytes32_vals {
@@ -948,6 +959,7 @@ pub type PreimageResolver = Arc<dyn Fn(u64, PreimageType, Bytes32) -> Option<CBy
 #[derive(Clone)]
 struct PreimageResolverWrapper {
     resolver: PreimageResolver,
+    #[cfg(feature = "native")]
     last_resolved: Option<(Bytes32, CBytes)>,
 }
 
@@ -961,6 +973,7 @@ impl PreimageResolverWrapper {
     pub fn new(resolver: PreimageResolver) -> PreimageResolverWrapper {
         PreimageResolverWrapper {
             resolver,
+            #[cfg(feature = "native")]
             last_resolved: None,
         }
     }
@@ -1277,6 +1290,7 @@ impl Machine {
             inbox_contents,
             preimage_resolver,
             None,
+            0, // version only applies to user (Stylus) modules, not system libraries
         )
     }
 
@@ -1306,6 +1320,7 @@ impl Machine {
             HashMap::default(),
             Arc::new(|_, _, _| panic!("tried to read preimage")),
             Some(stylus_data),
+            compile.version,
         )?;
 
         let footprint: u32 = stylus_data.footprint.into();
@@ -1332,7 +1347,7 @@ impl Machine {
             self.debug_info = true;
         }
 
-        let module = Module::from_user_binary(&bin, debug_funcs, Some(stylus_data))?;
+        let module = Module::from_user_binary(&bin, debug_funcs, Some(stylus_data), version)?;
         let hash = module.hash();
         self.add_stylus_module(hash, module.into_bytes());
         Ok(hash)
@@ -1354,6 +1369,7 @@ impl Machine {
         inbox_contents: HashMap<(InboxIdentifier, u64), Vec<u8>>,
         preimage_resolver: PreimageResolver,
         stylus_data: Option<StylusData>,
+        version: u16,
     ) -> Result<Machine> {
         use ArbValueType::*;
 
@@ -1401,6 +1417,7 @@ impl Machine {
                 true,
                 debug_funcs,
                 None,
+                0, // version only applies to user (Stylus) modules, not system libraries
             )?;
             for (name, &func) in &*module.func_exports {
                 let ty = module.func_types[func as usize].clone();
@@ -1437,6 +1454,7 @@ impl Machine {
             allow_hostapi_from_main,
             debug_funcs,
             stylus_data,
+            version,
         )?);
 
         // Build the entrypoint module
