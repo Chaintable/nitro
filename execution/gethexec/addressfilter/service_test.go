@@ -517,9 +517,6 @@ func (h *HashStore) isAnyRestricted(addrs []common.Address) bool {
 	return false
 }
 
-// Cross-checks HashRawBytes against the vendor-supplied vector shared on Slack:
-// salt = "ce823987-8c5b-42c8-9d44-11df313b91e9", address = "0xddfabcdc4d8ffc6d5beaf154f18b778f892a0740",
-// expected sha256(salt[16] || address[20]) = c148590f0f751bcd1cccdc5876433aaf8acf38a31483f426da0d43043b27f193.
 func TestHashRawBytesVendorVector(t *testing.T) {
 	salt, err := uuid.Parse("ce823987-8c5b-42c8-9d44-11df313b91e9")
 	require.NoError(t, err)
