@@ -5,6 +5,7 @@ package addressfilter
 
 import (
 	"crypto/sha256"
+	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -14,12 +15,20 @@ import (
 	"github.com/ethereum/go-ethereum/common/lru"
 )
 
+type HashingScheme string
+
+const (
+	HashingSchemeStringInput   HashingScheme = "sha256-stringinput"
+	HashingSchemeRawBytesInput HashingScheme = "sha256-rawbytesinput"
+)
+
 // hashData holds the immutable hash list data.
 // Once created, this struct is never modified, making it safe for concurrent reads.
 // The cache is included here so it gets swapped atomically with the hash data.
 type hashData struct {
 	id              uuid.UUID
 	salt            uuid.UUID
+	scheme          HashingScheme
 	hashInputPrefix string
 	hashes          map[common.Hash]struct{}
 	digest          string
@@ -41,8 +50,26 @@ func HashWithPrefix(prefix string, address common.Address) common.Hash {
 	return sha256.Sum256([]byte(hashInput))
 }
 
+func HashRawBytes(salt uuid.UUID, address common.Address) common.Hash {
+	var buf [len(salt) + common.AddressLength]byte
+	copy(buf[:len(salt)], salt[:])
+	copy(buf[len(salt):], address[:])
+	return sha256.Sum256(buf[:])
+}
+
 func GetHashInputPrefix(salt uuid.UUID) string {
 	return salt.String() + "::0x"
+}
+
+func (d *hashData) hashAddress(addr common.Address) common.Hash {
+	switch d.scheme {
+	case HashingSchemeRawBytesInput:
+		return HashRawBytes(d.salt, addr)
+	case HashingSchemeStringInput:
+		return HashWithPrefix(d.hashInputPrefix, addr)
+	default:
+		panic(fmt.Sprintf("addressfilter: unhandled HashingScheme %q", d.scheme))
+	}
 }
 
 func NewHashStore(cacheSize int) *HashStore {
@@ -59,10 +86,16 @@ func NewHashStore(cacheSize int) *HashStore {
 // Store atomically swaps in a new hash list.
 // This is called after a new hash list has been downloaded and parsed.
 // A new LRU cache is created for the new data, ensuring atomic consistency.
-func (h *HashStore) Store(id uuid.UUID, salt uuid.UUID, hashes []common.Hash, digest string) {
+func (h *HashStore) Store(id uuid.UUID, salt uuid.UUID, scheme HashingScheme, hashes []common.Hash, digest string) {
+	switch scheme {
+	case HashingSchemeStringInput, HashingSchemeRawBytesInput:
+	default:
+		panic(fmt.Sprintf("addressfilter: invalid HashingScheme %q passed to HashStore.Store", scheme))
+	}
 	newData := &hashData{
 		id:              id,
 		salt:            salt,
+		scheme:          scheme,
 		hashInputPrefix: GetHashInputPrefix(salt),
 		hashes:          make(map[common.Hash]struct{}, len(hashes)),
 		digest:          digest,
@@ -88,7 +121,7 @@ func (h *HashStore) IsRestricted(addr common.Address) bool {
 	if restricted, ok := data.cache.Get(addr); ok {
 		return restricted
 	}
-	_, restricted := data.hashes[HashWithPrefix(data.hashInputPrefix, addr)]
+	_, restricted := data.hashes[data.hashAddress(addr)]
 	// Cache the result
 	data.cache.Add(addr, restricted)
 	return restricted
@@ -105,4 +138,8 @@ func (h *HashStore) Size() int {
 
 func (h *HashStore) LoadedAt() time.Time {
 	return h.data.Load().loadedAt
+}
+
+func (h *HashStore) Scheme() HashingScheme {
+	return h.data.Load().scheme
 }
