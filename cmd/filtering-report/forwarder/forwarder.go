@@ -101,12 +101,13 @@ func ConfigAddOptions(prefix string, f *pflag.FlagSet) {
 //     optional poison queue and deleted from the main queue. The poison queue can
 //     be used for manual inspection, reprocessing, or simply discarded.
 //
-//   - Retryable HTTP errors (5xx, 408, 425, 429) leave the message in the queue
-//     for SQS to redeliver after its visibility timeout expires. Since all reports
-//     target the same endpoint, a per-worker slowdown kicks in after a configurable
-//     number of consecutive retryable errors, preventing workers from hammering a
-//     degraded endpoint and avoiding unnecessary consumption of the SQS max receive
-//     count quota.
+//   - All other errors — retryable HTTP errors (5xx, 408, 425, 429) and transport
+//     errors (DNS, connection refused, TLS, timeouts) — leave the message in the
+//     queue for SQS to redeliver after its visibility timeout expires. Since all
+//     reports target the same endpoint, a per-worker slowdown kicks in after a
+//     configurable number of consecutive retryable errors, preventing workers from
+//     hammering a degraded endpoint and avoiding unnecessary consumption of the SQS
+//     max receive count quota.
 //
 // The SQS queue should be configured with a small default visibility timeout
 // (e.g. 1-3 minutes), a max receive count (e.g. 150+), and a DLQ (dead-letter
@@ -163,16 +164,14 @@ func (r *Forwarder) pollAndForward(ctx context.Context, consecutiveRetryableErro
 	if err := r.forwardToEndpoint(ctx, *msg.Body); err != nil {
 		log.Error("Failed to forward report to external endpoint", "err", err, "messageId", *msg.MessageId)
 		var httpErr *httperror.HTTPError
-		if errors.As(err, &httpErr) {
-			if httpErr.IsRetryable() {
-				*consecutiveRetryableErrors++
-				if *consecutiveRetryableErrors >= r.config.ExternalEndpointRetryableErrorSlowdown.ConsecutiveRetryableErrors {
-					return r.config.ExternalEndpointRetryableErrorSlowdown.Duration
-				}
-			} else {
-				*consecutiveRetryableErrors = 0
-				r.sendToPoisonQueue(ctx, msg)
-			}
+		if errors.As(err, &httpErr) && !httpErr.IsRetryable() {
+			*consecutiveRetryableErrors = 0
+			r.sendToPoisonQueue(ctx, msg)
+			return 0
+		}
+		*consecutiveRetryableErrors++
+		if *consecutiveRetryableErrors >= r.config.ExternalEndpointRetryableErrorSlowdown.ConsecutiveRetryableErrors {
+			return r.config.ExternalEndpointRetryableErrorSlowdown.Duration
 		}
 		return 0
 	}
