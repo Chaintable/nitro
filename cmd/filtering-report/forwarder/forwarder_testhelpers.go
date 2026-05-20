@@ -59,7 +59,16 @@ func (m *MockExternalEndpoint) URL() string {
 	return m.server.URL
 }
 
-func NewTestForwarder(t *testing.T, queueClient *sqsclient.MockQueueClient, poisonQueueClient *sqsclient.MockQueueClient, endpointURL string) *Forwarder {
+func (m *MockExternalEndpoint) AssertNoReport(t *testing.T, within time.Duration) {
+	t.Helper()
+	select {
+	case r := <-m.reports:
+		t.Fatalf("unexpected report: %s", r.TxHash.Hex())
+	case <-time.After(within):
+	}
+}
+
+func NewTestForwarder(t *testing.T, queueClient sqsclient.QueueClient, poisonQueueClient sqsclient.QueueClient, endpointURL string) *Forwarder {
 	t.Helper()
 	config := &Config{
 		Workers:            1,
