@@ -344,7 +344,7 @@ FROM nitro-node AS nitro-node-rust-validator
 USER root
 RUN export DEBIAN_FRONTEND=noninteractive && \
     apt-get update && \
-    apt-get install -y xxd curl && \
+    apt-get install -y xxd curl netcat-traditional && \
     rm -rf /var/lib/apt/lists/* /usr/share/doc/* /var/cache/ldconfig/aux-cache /usr/lib/python3.9/__pycache__/ /usr/lib/python3.9/*/__pycache__/ /var/log/*
 COPY --from=prover-export /bin/validator /usr/local/bin/
 COPY scripts/rust-val-entry.sh /usr/local/bin/

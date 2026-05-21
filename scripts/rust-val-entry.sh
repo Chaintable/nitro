@@ -3,14 +3,14 @@
 xxd -l 32 -ps -c 40 /dev/urandom > /tmp/nitro-val.jwt
 
 valopts=()
-while [[ $1 == "--val-options"* ]]; do
+if [[ $1 == "--val-options"* ]]; then
     shift
     while [[ "$1" != "--" ]] && [[ $# -gt 0 ]]; do
-        valopts=( "${valopts[@]}" "$1" )
+        valopts+=( "$1" )
         shift
     done
     shift
-done
+fi
 echo launching rust validation server
 /usr/local/bin/validator --address 0.0.0.0:4141 --jwt-secret /tmp/nitro-val.jwt --root-path /home/user/target/machines "${valopts[@]}" &
 echo waiting for rust validation server to start
