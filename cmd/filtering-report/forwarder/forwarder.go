@@ -180,7 +180,7 @@ func (r *Forwarder) pollAndForward(ctx context.Context, consecutiveRetryableErro
 		var httpErr *httperror.HTTPError
 		if errors.As(err, &httpErr) && !httpErr.IsRetryable() {
 			*consecutiveRetryableErrors = 0
-			r.sendToPoisonQueue(ctx, msg)
+			r.sendToPoisonQueue(ctx, msg, httpErr)
 			return 0
 		}
 		*consecutiveRetryableErrors++
@@ -196,14 +196,17 @@ func (r *Forwarder) pollAndForward(ctx context.Context, consecutiveRetryableErro
 	return 0
 }
 
-func (r *Forwarder) sendToPoisonQueue(ctx context.Context, msg sqstypes.Message) {
+func (r *Forwarder) sendToPoisonQueue(ctx context.Context, msg sqstypes.Message, httpErr *httperror.HTTPError) {
 	if r.poisonQueueClient == nil {
 		return
 	}
 	if err := r.poisonQueueClient.Send(ctx, *msg.Body); err != nil {
-		log.Error("Failed to send message to poison queue", "err", err, "messageId", *msg.MessageId)
+		log.Error("Failed to send message to poison queue", "err", err, "messageId", *msg.MessageId,
+			"triggerStatusCode", httpErr.StatusCode, "triggerBody", httpErr.Body)
 		return
 	}
+	log.Info("Sent message to poison queue", "messageId", *msg.MessageId,
+		"triggerStatusCode", httpErr.StatusCode, "triggerBody", httpErr.Body)
 	if err := r.queueClient.Delete(ctx, *msg.ReceiptHandle); err != nil {
 		log.Error("Failed to delete SQS message after sending to poison queue", "err", err, "messageId", *msg.MessageId)
 	}
