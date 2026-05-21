@@ -288,11 +288,10 @@ func TestParseHashListJSON(t *testing.T) {
 		"hashing_scheme": "sha256-rawbytesinput",
 		"hashes":         []string{hex.EncodeToString(hashed_addr1[:])},
 	}
-	rawBytesJSON, _ := json.Marshal(rawBytesPayload)
+	rawBytesJSON, err := json.Marshal(rawBytesPayload)
+	require.NoError(t, err)
 	parsedJson, err = parseHashListJSON(rawBytesJSON)
-	if err != nil {
-		t.Fatalf("failed to parse JSON with sha256-rawbytesinput hashing_scheme: %v", err)
-	}
+	require.NoError(t, err)
 	if parsedJson.Scheme != HashingSchemeRawBytesInput {
 		t.Errorf("expected scheme %q, got %q", HashingSchemeRawBytesInput, parsedJson.Scheme)
 	}
@@ -583,17 +582,4 @@ func TestRawBytesScheme_ParseStoreLookup(t *testing.T) {
 	if store.IsRestricted(otherAddr) {
 		t.Fatal("non-listed address must not be restricted")
 	}
-}
-
-// Locks the Store-time guard so any caller that bypasses parseHashListJSON
-// with an invalid scheme panics at load, not in the sequencer hot path.
-func TestHashStore_StoreInvalidSchemePanics(t *testing.T) {
-	store := NewHashStore(8)
-	salt, _ := uuid.Parse("3ccf0cbf-b23f-47ba-9c2f-4e7bd672b4c7")
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected panic when storing under unknown HashingScheme")
-		}
-	}()
-	store.Store(uuid.New(), salt, HashingScheme("bogus"), nil, "etag")
 }

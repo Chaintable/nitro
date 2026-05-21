@@ -5,7 +5,6 @@ package addressfilter
 
 import (
 	"crypto/sha256"
-	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -28,7 +27,7 @@ const (
 type hashData struct {
 	id              uuid.UUID
 	salt            uuid.UUID
-	scheme          HashingScheme
+	isRawBytes      bool
 	hashInputPrefix string
 	hashes          map[common.Hash]struct{}
 	digest          string
@@ -62,14 +61,10 @@ func GetHashInputPrefix(salt uuid.UUID) string {
 }
 
 func (d *hashData) hashAddress(addr common.Address) common.Hash {
-	switch d.scheme {
-	case HashingSchemeRawBytesInput:
+	if d.isRawBytes {
 		return HashRawBytes(d.salt, addr)
-	case HashingSchemeStringInput:
-		return HashWithPrefix(d.hashInputPrefix, addr)
-	default:
-		panic(fmt.Sprintf("addressfilter: unhandled HashingScheme %q", d.scheme))
 	}
+	return HashWithPrefix(d.hashInputPrefix, addr)
 }
 
 func NewHashStore(cacheSize int) *HashStore {
@@ -87,15 +82,10 @@ func NewHashStore(cacheSize int) *HashStore {
 // This is called after a new hash list has been downloaded and parsed.
 // A new LRU cache is created for the new data, ensuring atomic consistency.
 func (h *HashStore) Store(id uuid.UUID, salt uuid.UUID, scheme HashingScheme, hashes []common.Hash, digest string) {
-	switch scheme {
-	case HashingSchemeStringInput, HashingSchemeRawBytesInput:
-	default:
-		panic(fmt.Sprintf("addressfilter: invalid HashingScheme %q passed to HashStore.Store", scheme))
-	}
 	newData := &hashData{
 		id:              id,
 		salt:            salt,
-		scheme:          scheme,
+		isRawBytes:      scheme == HashingSchemeRawBytesInput,
 		hashInputPrefix: GetHashInputPrefix(salt),
 		hashes:          make(map[common.Hash]struct{}, len(hashes)),
 		digest:          digest,
@@ -138,8 +128,4 @@ func (h *HashStore) Size() int {
 
 func (h *HashStore) LoadedAt() time.Time {
 	return h.data.Load().loadedAt
-}
-
-func (h *HashStore) Scheme() HashingScheme {
-	return h.data.Load().scheme
 }
