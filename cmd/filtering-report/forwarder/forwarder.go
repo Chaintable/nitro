@@ -31,7 +31,7 @@ type ExternalEndpointRetryableErrorSlowdownConfig struct {
 
 var DefaultExternalEndpointRetryableErrorSlowdownConfig = ExternalEndpointRetryableErrorSlowdownConfig{
 	Duration:                   2 * time.Minute,
-	ConsecutiveRetryableErrors: 3,
+	ConsecutiveRetryableErrors: 4,
 }
 
 func (c *ExternalEndpointRetryableErrorSlowdownConfig) Validate() error {
