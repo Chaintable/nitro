@@ -134,7 +134,7 @@ func TestForwarder_EmptyQueue(t *testing.T) {
 	pemPath, endpoint := NewMockExternalEndpoint(t)
 	queueClient := &sqsclient.MockQueueClient{}
 
-	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL, pemPath)
+	forwarder := NewTestForwarder(t, queueClient, nil, endpoint.URL(), pemPath)
 	var consecutiveRetryableErrors int
 	interval := forwarder.pollAndForward(t.Context(), &consecutiveRetryableErrors)
 
@@ -156,7 +156,7 @@ func TestForwarder_ReceiveError(t *testing.T) {
 		ReceiveErr: fmt.Errorf("simulated SQS error"),
 	}
 
-	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL, pemPath)
+	forwarder := NewTestForwarder(t, queueClient, nil, endpoint.URL(), pemPath)
 	var consecutiveRetryableErrors int
 	interval := forwarder.pollAndForward(t.Context(), &consecutiveRetryableErrors)
 
@@ -182,7 +182,7 @@ func TestForwarder_FailsConstructionOnExpiredLeaf(t *testing.T) {
 		},
 		Signer: signerCfg,
 	}
-	_, err := New(config, &sqsclient.MockQueueClient{})
+	_, err := New(config, &sqsclient.MockQueueClient{}, nil)
 	if err == nil {
 		t.Fatal("expected New to fail on expired leaf")
 	}
@@ -236,6 +236,7 @@ func TestForwarder_DeleteError(t *testing.T) {
 }
 
 func TestForwarder_RetryableHTTPErrorSlowdown_AfterThreshold(t *testing.T) {
+	pemPath, _ := signertest.SigningFixture(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
 	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
@@ -246,7 +247,7 @@ func TestForwarder_RetryableHTTPErrorSlowdown_AfterThreshold(t *testing.T) {
 	rpcClient := stack.Attach()
 	t.Cleanup(func() { rpcClient.Close() })
 
-	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL)
+	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL, pemPath)
 	threshold := forwarder.config.ExternalEndpointRetryableErrorSlowdown.ConsecutiveRetryableErrors
 
 	// Enqueue enough messages to exceed the threshold.
@@ -290,6 +291,7 @@ func TestForwarder_RetryableHTTPErrorSlowdown_AfterThreshold(t *testing.T) {
 }
 
 func TestForwarder_RetryableHTTPErrorSlowdown_ResetOnSuccess(t *testing.T) {
+	pemPath, _ := signertest.SigningFixture(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
 	var callCount atomic.Int32
 	failUntil := 2 // first 2 calls fail, third succeeds
 	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -327,7 +329,7 @@ func TestForwarder_RetryableHTTPErrorSlowdown_ResetOnSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL)
+	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL, pemPath)
 	ctx := t.Context()
 	var consecutiveRetryableErrors int
 
@@ -347,6 +349,7 @@ func TestForwarder_RetryableHTTPErrorSlowdown_ResetOnSuccess(t *testing.T) {
 }
 
 func TestForwarder_RetryableHTTPErrorSlowdown_ResetOnNonRetryableError(t *testing.T) {
+	pemPath, _ := signertest.SigningFixture(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
 	var callCount atomic.Int32
 	failRetryableUntil := 2 // first 2 calls return 500, third returns 400
 	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -384,7 +387,7 @@ func TestForwarder_RetryableHTTPErrorSlowdown_ResetOnNonRetryableError(t *testin
 		t.Fatal(err)
 	}
 
-	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL)
+	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL, pemPath)
 	ctx := t.Context()
 	var consecutiveRetryableErrors int
 
@@ -404,6 +407,7 @@ func TestForwarder_RetryableHTTPErrorSlowdown_ResetOnNonRetryableError(t *testin
 }
 
 func TestForwarder_RetryableHTTPErrorSlowdown_NonRetryableErrorDoesNotCount(t *testing.T) {
+	pemPath, _ := signertest.SigningFixture(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
 	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest) // 400 - non-retryable client error
 	}))
@@ -414,7 +418,7 @@ func TestForwarder_RetryableHTTPErrorSlowdown_NonRetryableErrorDoesNotCount(t *t
 	rpcClient := stack.Attach()
 	t.Cleanup(func() { rpcClient.Close() })
 
-	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL)
+	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL, pemPath)
 	threshold := forwarder.config.ExternalEndpointRetryableErrorSlowdown.ConsecutiveRetryableErrors
 
 	reports := make([]addressfilter.FilteredTxReport, threshold+1)
@@ -453,6 +457,7 @@ func TestForwarder_RetryableHTTPErrorSlowdown_NonRetryableErrorDoesNotCount(t *t
 }
 
 func TestForwarder_PoisonQueue_NonRetryableErrorSentToPoisonQueue(t *testing.T) {
+	pemPath, _ := signertest.SigningFixture(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
 	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 	}))
@@ -482,7 +487,7 @@ func TestForwarder_PoisonQueue_NonRetryableErrorSentToPoisonQueue(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	forwarder := NewTestForwarder(t, queueClient, poisonQueueClient, externalEndpointServer.URL)
+	forwarder := NewTestForwarder(t, queueClient, poisonQueueClient, externalEndpointServer.URL, pemPath)
 	var consecutiveRetryableErrors int
 	forwarder.pollAndForward(t.Context(), &consecutiveRetryableErrors)
 
@@ -500,6 +505,7 @@ func TestForwarder_PoisonQueue_NonRetryableErrorSentToPoisonQueue(t *testing.T) 
 }
 
 func TestForwarder_PoisonQueue_SendFailureLeavesMessageInQueue(t *testing.T) {
+	pemPath, _ := signertest.SigningFixture(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
 	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 	}))
@@ -531,7 +537,7 @@ func TestForwarder_PoisonQueue_SendFailureLeavesMessageInQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	forwarder := NewTestForwarder(t, queueClient, poisonQueueClient, externalEndpointServer.URL)
+	forwarder := NewTestForwarder(t, queueClient, poisonQueueClient, externalEndpointServer.URL, pemPath)
 	var consecutiveRetryableErrors int
 	forwarder.pollAndForward(t.Context(), &consecutiveRetryableErrors)
 
