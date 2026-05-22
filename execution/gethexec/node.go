@@ -443,7 +443,8 @@ func CreateExecutionNode(
 	txprecheckConfigFetcher := func() *TxPreCheckerConfig { return &configFetcher.Get().TxPreChecker }
 
 	var precheckerFilterer core.TxFilterer
-	if config.TransactionFiltering.Enable {
+	// Sequencer filters via block-production hooks; skip prechecker dry-run when it is the publisher.
+	if config.TransactionFiltering.Enable && txPublisher != sequencer {
 		precheckerFilterer = &txFilterer{execEngine: execEngine, eventFilter: eventFilter}
 	}
 

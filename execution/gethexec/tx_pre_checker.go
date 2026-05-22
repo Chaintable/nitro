@@ -81,10 +81,6 @@ func NewTxPreChecker(
 	config TxPreCheckerConfigFetcher,
 	txFilterer core.TxFilterer,
 ) *TxPreChecker {
-	// Sequencer filters via block-production hooks; skip prechecker dry-run.
-	if _, isSequencer := publisher.(*Sequencer); isSequencer {
-		txFilterer = nil
-	}
 	return &TxPreChecker{
 		TransactionPublisher: publisher,
 		bc:                   bc,
