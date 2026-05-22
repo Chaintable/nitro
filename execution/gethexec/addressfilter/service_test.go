@@ -76,7 +76,7 @@ func TestHashStore_AtomicSwap(t *testing.T) {
 
 	salt1, _ := uuid.Parse("3ccf0cbf-b23f-47ba-9c2f-4e7bd672b4c7")
 	addr1 := common.HexToAddress("0x1111111111111111111111111111111111111111")
-	hash1 := HashWithPrefix(GetHashInputPrefix(salt1), addr1)
+	hash1 := HashStringInputWithPrefix(GetHashStringInputPrefix(salt1), addr1)
 
 	// Store first set
 	store.Store(uuid.New(), salt1, HashingSchemeStringInput, []common.Hash{hash1}, "etag1")
@@ -87,7 +87,7 @@ func TestHashStore_AtomicSwap(t *testing.T) {
 	// Store second set with different salt (simulating hourly rotation)
 	salt2, _ := uuid.Parse("2cef04bf-b23f-47ba-9c2f-4e7bd652c1c6")
 	addr2 := common.HexToAddress("0x2222222222222222222222222222222222222222")
-	hash2 := HashWithPrefix(GetHashInputPrefix(salt2), addr2)
+	hash2 := HashStringInputWithPrefix(GetHashStringInputPrefix(salt2), addr2)
 
 	store.Store(uuid.New(), salt2, HashingSchemeStringInput, []common.Hash{hash2}, "etag2")
 
@@ -115,7 +115,7 @@ func TestHashStore_ConcurrentAccess(t *testing.T) {
 		addr := common.BigToAddress(common.Big1)
 		addr[18] = byte(i)
 		addresses = append(addresses, addr)
-		hash := HashWithPrefix(GetHashInputPrefix(salt1), addr)
+		hash := HashStringInputWithPrefix(GetHashStringInputPrefix(salt1), addr)
 		hashes1 = append(hashes1, hash)
 	}
 	store.Store(uuid.New(), salt1, HashingSchemeStringInput, hashes1, "etag")
@@ -128,17 +128,17 @@ func TestHashStore_ConcurrentAccess(t *testing.T) {
 		addr := common.BigToAddress(common.Big2)
 		addr[18] = byte(i)
 		addresses2 = append(addresses2, addr)
-		hash := HashWithPrefix(GetHashInputPrefix(salt2), addr)
+		hash := HashStringInputWithPrefix(GetHashStringInputPrefix(salt2), addr)
 		hashes2 = append(hashes2, hash)
 	}
 
 	rawHashes1 := make([]common.Hash, len(addresses))
 	for i, addr := range addresses {
-		rawHashes1[i] = HashRawBytes(salt1, addr)
+		rawHashes1[i] = HashRawBytesInput(salt1, addr)
 	}
 	rawHashes2 := make([]common.Hash, len(addresses2))
 	for i, addr := range addresses2 {
-		rawHashes2[i] = HashRawBytes(salt2, addr)
+		rawHashes2[i] = HashRawBytesInput(salt2, addr)
 	}
 
 	// Run concurrent reads
@@ -425,7 +425,7 @@ func TestHashStore_CustomCacheSize(t *testing.T) {
 	// Pre-compute hashes
 	hashes := make([]common.Hash, 0, len(addresses))
 	for _, addr := range addresses {
-		hash := HashWithPrefix(GetHashInputPrefix(salt), addr)
+		hash := HashStringInputWithPrefix(GetHashStringInputPrefix(salt), addr)
 		hashes = append(hashes, hash)
 	}
 
@@ -516,14 +516,14 @@ func (h *HashStore) isAnyRestricted(addrs []common.Address) bool {
 	return false
 }
 
-func TestHashRawBytesVendorVector(t *testing.T) {
+func TestHashRawBytesInputVendorVector(t *testing.T) {
 	salt, err := uuid.Parse("ce823987-8c5b-42c8-9d44-11df313b91e9")
 	require.NoError(t, err)
 	addr := common.HexToAddress("0xddfabcdc4d8ffc6d5beaf154f18b778f892a0740")
 	expected := common.HexToHash("0xc148590f0f751bcd1cccdc5876433aaf8acf38a31483f426da0d43043b27f193")
-	got := HashRawBytes(salt, addr)
+	got := HashRawBytesInput(salt, addr)
 	if got != expected {
-		t.Fatalf("HashRawBytes mismatch: got %s, want %s", got.Hex(), expected.Hex())
+		t.Fatalf("HashRawBytesInput mismatch: got %s, want %s", got.Hex(), expected.Hex())
 	}
 }
 
@@ -534,7 +534,7 @@ func TestHashStore_RawBytesScheme(t *testing.T) {
 	require.NoError(t, err)
 	addrRestricted := common.HexToAddress("0xddfabcdc4d8ffc6d5beaf154f18b778f892a0740")
 	addrAllowed := common.HexToAddress("0x000000000000000000000000000000000000beef")
-	hashRestricted := HashRawBytes(salt, addrRestricted)
+	hashRestricted := HashRawBytesInput(salt, addrRestricted)
 
 	store.Store(uuid.New(), salt, HashingSchemeRawBytesInput, []common.Hash{hashRestricted}, "raw")
 
@@ -558,7 +558,7 @@ func TestRawBytesScheme_ParseStoreLookup(t *testing.T) {
 	salt, err := uuid.Parse("ce823987-8c5b-42c8-9d44-11df313b91e9")
 	require.NoError(t, err)
 	addr := common.HexToAddress("0xddfabcdc4d8ffc6d5beaf154f18b778f892a0740")
-	hash := HashRawBytes(salt, addr)
+	hash := HashRawBytesInput(salt, addr)
 
 	payload := map[string]any{
 		"id":             uuid.NewString(),

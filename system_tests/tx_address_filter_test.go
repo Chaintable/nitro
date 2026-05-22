@@ -42,12 +42,12 @@ func newHashedCheckerWithScheme(addrs []common.Address, scheme addressfilter.Has
 		hashes := make([]common.Hash, len(addrs))
 		if scheme == addressfilter.HashingSchemeRawBytesInput {
 			for i, addr := range addrs {
-				hashes[i] = addressfilter.HashRawBytes(salt, addr)
+				hashes[i] = addressfilter.HashRawBytesInput(salt, addr)
 			}
 		} else {
-			hashPrefix := addressfilter.GetHashInputPrefix(salt)
+			hashPrefix := addressfilter.GetHashStringInputPrefix(salt)
 			for i, addr := range addrs {
-				hashes[i] = addressfilter.HashWithPrefix(hashPrefix, addr)
+				hashes[i] = addressfilter.HashStringInputWithPrefix(hashPrefix, addr)
 			}
 		}
 		store.Store(uuid.New(), salt, scheme, hashes, "test")

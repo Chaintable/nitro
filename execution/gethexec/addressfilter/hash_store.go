@@ -25,14 +25,14 @@ const (
 // Once created, this struct is never modified, making it safe for concurrent reads.
 // The cache is included here so it gets swapped atomically with the hash data.
 type hashData struct {
-	id              uuid.UUID
-	salt            uuid.UUID
-	isRawBytes      bool
-	hashInputPrefix string
-	hashes          map[common.Hash]struct{}
-	digest          string
-	loadedAt        time.Time
-	cache           *lru.Cache[common.Address, bool] // LRU cache for address lookup results
+	id                    uuid.UUID
+	salt                  uuid.UUID
+	useRawBytesInput      bool
+	hashStringInputPrefix string
+	hashes                map[common.Hash]struct{}
+	digest                string
+	loadedAt              time.Time
+	cache                 *lru.Cache[common.Address, bool] // LRU cache for address lookup results
 }
 
 // HashStore provides thread-safe access to restricted address hashes.
@@ -44,27 +44,27 @@ type HashStore struct {
 	cacheSize int
 }
 
-func HashWithPrefix(prefix string, address common.Address) common.Hash {
+func HashStringInputWithPrefix(prefix string, address common.Address) common.Hash {
 	hashInput := prefix + common.Bytes2Hex(address.Bytes())
 	return sha256.Sum256([]byte(hashInput))
 }
 
-func HashRawBytes(salt uuid.UUID, address common.Address) common.Hash {
+func HashRawBytesInput(salt uuid.UUID, address common.Address) common.Hash {
 	var buf [len(salt) + common.AddressLength]byte
 	copy(buf[:len(salt)], salt[:])
 	copy(buf[len(salt):], address[:])
 	return sha256.Sum256(buf[:])
 }
 
-func GetHashInputPrefix(salt uuid.UUID) string {
+func GetHashStringInputPrefix(salt uuid.UUID) string {
 	return salt.String() + "::0x"
 }
 
 func (d *hashData) hashAddress(addr common.Address) common.Hash {
-	if d.isRawBytes {
-		return HashRawBytes(d.salt, addr)
+	if d.useRawBytesInput {
+		return HashRawBytesInput(d.salt, addr)
 	}
-	return HashWithPrefix(d.hashInputPrefix, addr)
+	return HashStringInputWithPrefix(d.hashStringInputPrefix, addr)
 }
 
 func NewHashStore(cacheSize int) *HashStore {
@@ -83,14 +83,14 @@ func NewHashStore(cacheSize int) *HashStore {
 // A new LRU cache is created for the new data, ensuring atomic consistency.
 func (h *HashStore) Store(id uuid.UUID, salt uuid.UUID, scheme HashingScheme, hashes []common.Hash, digest string) {
 	newData := &hashData{
-		id:              id,
-		salt:            salt,
-		isRawBytes:      scheme == HashingSchemeRawBytesInput,
-		hashInputPrefix: GetHashInputPrefix(salt),
-		hashes:          make(map[common.Hash]struct{}, len(hashes)),
-		digest:          digest,
-		loadedAt:        time.Now(),
-		cache:           lru.NewCache[common.Address, bool](h.cacheSize),
+		id:                    id,
+		salt:                  salt,
+		useRawBytesInput:      scheme == HashingSchemeRawBytesInput,
+		hashStringInputPrefix: GetHashStringInputPrefix(salt),
+		hashes:                make(map[common.Hash]struct{}, len(hashes)),
+		digest:                digest,
+		loadedAt:              time.Now(),
+		cache:                 lru.NewCache[common.Address, bool](h.cacheSize),
 	}
 	for _, hash := range hashes {
 		newData.hashes[hash] = struct{}{}
