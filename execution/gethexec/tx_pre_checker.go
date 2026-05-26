@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"testing"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,6 +28,7 @@ import (
 	"github.com/offchainlabs/nitro/arbos/arbosState"
 	"github.com/offchainlabs/nitro/arbos/l1pricing"
 	"github.com/offchainlabs/nitro/execution/gethexec/addressfilter"
+	"github.com/offchainlabs/nitro/execution/gethexec/eventfilter"
 	"github.com/offchainlabs/nitro/timeboost"
 	"github.com/offchainlabs/nitro/util/arbmath"
 	"github.com/offchainlabs/nitro/util/headerreader"
@@ -73,19 +75,28 @@ type TxPreChecker struct {
 	expressLaneTracker       *timeboost.ExpressLaneTracker
 	backend                  core.NodeInterfaceBackendAPI
 	filteringReportRPCClient *FilteringReportRPCClient
+	// nil disables prechecker address-filter dry-run (e.g. on sequencer nodes).
+	txFilterer core.TxFilterer
 }
 
 func NewTxPreChecker(
 	publisher TransactionPublisher,
 	bc *core.BlockChain,
 	config TxPreCheckerConfigFetcher,
-	filteringReportRPCClient *FilteringReportRPCClient) *TxPreChecker {
+	txFilterer core.TxFilterer,
+	filteringReportRPCClient *FilteringReportRPCClient,
+) *TxPreChecker {
 	return &TxPreChecker{
 		TransactionPublisher:     publisher,
 		bc:                       bc,
 		config:                   config,
+		txFilterer:               txFilterer,
 		filteringReportRPCClient: filteringReportRPCClient,
 	}
+}
+
+func (c *TxPreChecker) SetTxFiltererForTest(_ *testing.T, execEngine *ExecutionEngine, ef *eventfilter.EventFilter) {
+	c.txFilterer = &txFilterer{execEngine: execEngine, eventFilter: ef}
 }
 
 func (c *TxPreChecker) SetAPIBackend(backend core.NodeInterfaceBackendAPI) {
@@ -305,7 +316,7 @@ func (c *TxPreChecker) SetExpressLaneTracker(tracker *timeboost.ExpressLaneTrack
 }
 
 func (c *TxPreChecker) checkFilteredAddresses(ctx context.Context, tx *types.Transaction, header *types.Header) error {
-	if c.backend == nil || c.backend.TxFilter() == nil || c.config().Strictness < TxPreCheckerStrictnessAlwaysCompatible {
+	if c.txFilterer == nil || c.backend == nil || c.config().Strictness < TxPreCheckerStrictnessAlwaysCompatible {
 		return nil
 	}
 	statedb, err := c.bc.StateAt(header.Root)
@@ -328,6 +339,7 @@ func (c *TxPreChecker) checkFilteredAddresses(ctx context.Context, tx *types.Tra
 		State:            statedb,
 		Backend:          c.backend,
 		RunScheduledTxes: retryables.RunScheduledTxes,
+		TxFilterer:       c.txFilterer,
 		ReportFilteredTx: func(_ context.Context, records []filter.FilteredAddressRecord) {
 			c.reportFilteredTx(tx, header, records)
 		},
