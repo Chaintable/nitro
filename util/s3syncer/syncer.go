@@ -23,16 +23,16 @@ var ErrObjectTooLarge = errors.New("s3 object exceeds max-file-size-mb")
 // DataHandler processes downloaded data and the associated digest.
 type DataHandler func(data []byte, digest string) error
 
-type ObjectTooLargeHandler func(size int64)
+type ObjectSizeHandler func(size int64)
 
 // Syncer handles S3 object syncing with ETag-based change detection.
 type Syncer struct {
-	client           s3client.FullClient
-	config           *Config
-	handleData       DataHandler
-	onObjectTooLarge ObjectTooLargeHandler
-	digestETag       string
-	mutex            sync.Mutex
+	client       s3client.FullClient
+	config       *Config
+	handleData   DataHandler
+	onObjectSize ObjectSizeHandler
+	digestETag   string
+	mutex        sync.Mutex
 }
 
 const bytesInMB = 1024 * 1024
@@ -40,12 +40,12 @@ const bytesInMB = 1024 * 1024
 func NewSyncer(
 	config *Config,
 	dataHandler DataHandler,
-	onObjectTooLarge ObjectTooLargeHandler,
+	onObjectSize ObjectSizeHandler,
 ) *Syncer {
 	return &Syncer{
-		config:           config,
-		handleData:       dataHandler,
-		onObjectTooLarge: onObjectTooLarge,
+		config:       config,
+		handleData:   dataHandler,
+		onObjectSize: onObjectSize,
 	}
 }
 
@@ -74,8 +74,8 @@ func (s *Syncer) headAndCheckSize(ctx context.Context) (etag string, size int64,
 		return "", 0, fmt.Errorf("HeadObject failed for s3://%s/%s: %w", s.config.Bucket, s.config.ObjectKey, err)
 	}
 	size = aws.ToInt64(headOutput.ContentLength)
+	s.onObjectSize(size)
 	if s.config.MaxFileSizeMB > 0 && size > int64(s.config.MaxFileSizeMB)*bytesInMB {
-		s.onObjectTooLarge(size)
 		return "", size, fmt.Errorf("%w: %d bytes > %d MB limit (s3://%s/%s)",
 			ErrObjectTooLarge, size, s.config.MaxFileSizeMB, s.config.Bucket, s.config.ObjectKey)
 	}

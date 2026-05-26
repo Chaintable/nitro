@@ -97,14 +97,14 @@ func newTestConfig(endpoint, key string, maxFileSizeMB int) *Config {
 }
 
 type syncerRecorder struct {
-	tooLargeSizes []int64
+	observedSizes []int64
 	handlerCalls  int
 	lastBody      []byte
 	lastDigest    string
 }
 
-func (r *syncerRecorder) onObjectTooLarge(size int64) {
-	r.tooLargeSizes = append(r.tooLargeSizes, size)
+func (r *syncerRecorder) onObjectSize(size int64) {
+	r.observedSizes = append(r.observedSizes, size)
 }
 
 func (r *syncerRecorder) handleData(body []byte, digest string) error {
@@ -130,7 +130,7 @@ func TestSyncer_RejectsOversizedObject(t *testing.T) {
 			endpoint := s3syncertest.NewFakeS3(t, testBucket, map[string][]byte{key: body})
 
 			rec := &syncerRecorder{}
-			syncer := NewSyncer(newTestConfig(endpoint, key, 1), rec.handleData, rec.onObjectTooLarge)
+			syncer := NewSyncer(newTestConfig(endpoint, key, 1), rec.handleData, rec.onObjectSize)
 			if err := syncer.Initialize(t.Context()); err != nil {
 				t.Fatalf("Initialize: %v", err)
 			}
@@ -139,11 +139,11 @@ func TestSyncer_RejectsOversizedObject(t *testing.T) {
 			if !errors.Is(err, ErrObjectTooLarge) {
 				t.Fatalf("expected ErrObjectTooLarge, got %v", err)
 			}
-			if got, want := len(rec.tooLargeSizes), 1; got != want {
-				t.Fatalf("onObjectTooLarge call count: got %d, want %d", got, want)
+			if got, want := len(rec.observedSizes), 1; got != want {
+				t.Fatalf("onObjectSize call count: got %d, want %d", got, want)
 			}
-			if got, want := rec.tooLargeSizes[0], int64(len(body)); got != want {
-				t.Errorf("onObjectTooLarge size: got %d, want %d", got, want)
+			if got, want := rec.observedSizes[0], int64(len(body)); got != want {
+				t.Errorf("onObjectSize size: got %d, want %d", got, want)
 			}
 			if rec.handlerCalls != 0 {
 				t.Errorf("data handler should not be called when object too large; got %d calls", rec.handlerCalls)
@@ -160,7 +160,7 @@ func TestSyncer_AcceptsWithinLimit(t *testing.T) {
 			endpoint := s3syncertest.NewFakeS3(t, testBucket, map[string][]byte{key: body})
 
 			rec := &syncerRecorder{}
-			syncer := NewSyncer(newTestConfig(endpoint, key, 10), rec.handleData, rec.onObjectTooLarge)
+			syncer := NewSyncer(newTestConfig(endpoint, key, 10), rec.handleData, rec.onObjectSize)
 			if err := syncer.Initialize(t.Context()); err != nil {
 				t.Fatalf("Initialize: %v", err)
 			}
@@ -168,8 +168,11 @@ func TestSyncer_AcceptsWithinLimit(t *testing.T) {
 			if err := tt.run(syncer, t.Context()); err != nil {
 				t.Fatalf("%s: %v", tt.name, err)
 			}
-			if len(rec.tooLargeSizes) != 0 {
-				t.Errorf("onObjectTooLarge should not be called; got %d calls", len(rec.tooLargeSizes))
+			if got, want := len(rec.observedSizes), 1; got != want {
+				t.Fatalf("onObjectSize call count: got %d, want %d", got, want)
+			}
+			if got, want := rec.observedSizes[0], int64(len(body)); got != want {
+				t.Errorf("onObjectSize size: got %d, want %d", got, want)
 			}
 			if rec.handlerCalls != 1 {
 				t.Fatalf("data handler call count: got %d, want 1", rec.handlerCalls)
@@ -192,7 +195,7 @@ func TestSyncer_LimitDisabled(t *testing.T) {
 			endpoint := s3syncertest.NewFakeS3(t, testBucket, map[string][]byte{key: body})
 
 			rec := &syncerRecorder{}
-			syncer := NewSyncer(newTestConfig(endpoint, key, 0), rec.handleData, rec.onObjectTooLarge)
+			syncer := NewSyncer(newTestConfig(endpoint, key, 0), rec.handleData, rec.onObjectSize)
 			if err := syncer.Initialize(t.Context()); err != nil {
 				t.Fatalf("Initialize: %v", err)
 			}
@@ -200,8 +203,11 @@ func TestSyncer_LimitDisabled(t *testing.T) {
 			if err := tt.run(syncer, t.Context()); err != nil {
 				t.Fatalf("%s with MaxFileSizeMB=0: %v", tt.name, err)
 			}
-			if len(rec.tooLargeSizes) != 0 {
-				t.Errorf("onObjectTooLarge should not be called when limit disabled; got %d calls", len(rec.tooLargeSizes))
+			if got, want := len(rec.observedSizes), 1; got != want {
+				t.Fatalf("onObjectSize call count: got %d, want %d", got, want)
+			}
+			if got, want := rec.observedSizes[0], int64(len(body)); got != want {
+				t.Errorf("onObjectSize size: got %d, want %d", got, want)
 			}
 			if rec.handlerCalls != 1 {
 				t.Fatalf("data handler call count: got %d, want 1", rec.handlerCalls)
@@ -221,7 +227,7 @@ func TestSyncer_HeadObjectError(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			endpoint := s3syncertest.NewFakeS3(t, testBucket, nil) // bucket exists, key does not
 			rec := &syncerRecorder{}
-			syncer := NewSyncer(newTestConfig(endpoint, "missing.json", 1), rec.handleData, rec.onObjectTooLarge)
+			syncer := NewSyncer(newTestConfig(endpoint, "missing.json", 1), rec.handleData, rec.onObjectSize)
 			if err := syncer.Initialize(t.Context()); err != nil {
 				t.Fatalf("Initialize: %v", err)
 			}
@@ -233,8 +239,8 @@ func TestSyncer_HeadObjectError(t *testing.T) {
 			if errors.Is(err, ErrObjectTooLarge) {
 				t.Errorf("missing-key error should not match ErrObjectTooLarge: %v", err)
 			}
-			if len(rec.tooLargeSizes) != 0 {
-				t.Errorf("onObjectTooLarge should not be called on HEAD failure; got %d calls", len(rec.tooLargeSizes))
+			if len(rec.observedSizes) != 0 {
+				t.Errorf("onObjectSize should not be called on HEAD failure; got %d calls", len(rec.observedSizes))
 			}
 			if rec.handlerCalls != 0 {
 				t.Errorf("data handler should not be called on HEAD failure; got %d calls", rec.handlerCalls)
