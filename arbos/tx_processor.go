@@ -192,7 +192,8 @@ func (p *TxProcessor) StartTxHook() (endTxNow bool, multiGasUsed multigas.MultiG
 		return func() {
 			evm.DecrementDepth() // fake the return to the first faked call
 			if tracer.OnExit != nil {
-				tracer.OnExit(evm.Depth(), nil, p.state.Burner.Burned(), nil, false)
+				//tracer.OnExit(evm.Depth(), nil, p.state.Burner.Burned(), nil, false)
+				tracer.OnExit(evm.Depth(), nil, 0, nil, false)
 			}
 
 			tracingInfo = util.NewTracingInfo(evm, from, *p.msg.To, util.TracingAfterEVM)
