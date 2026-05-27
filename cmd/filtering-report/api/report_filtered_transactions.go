@@ -16,7 +16,7 @@ import (
 )
 
 var sqsSendFailuresCounter = metrics.NewRegisteredCounter(
-	"arb/txfiltering/report/api/sqs_send_failures_total", nil,
+	"arb/filtering-report/api/sqs_send_failures_total", nil,
 )
 
 // ReportFilteredTransactions enqueues each report to SQS. All reports are

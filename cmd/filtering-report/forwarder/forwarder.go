@@ -27,10 +27,10 @@ import (
 
 var (
 	externalEndpointRetryableFailuresCounter = metrics.NewRegisteredCounter(
-		"arb/txfiltering/report/forwarder/external_endpoint_retryable_failures_total", nil,
+		"arb/filtering-report/forwarder/external_endpoint_retryable_failures_total", nil,
 	)
 	externalEndpointNonRetryableFailuresCounter = metrics.NewRegisteredCounter(
-		"arb/txfiltering/report/forwarder/external_endpoint_non_retryable_failures_total", nil,
+		"arb/filtering-report/forwarder/external_endpoint_non_retryable_failures_total", nil,
 	)
 )
 
