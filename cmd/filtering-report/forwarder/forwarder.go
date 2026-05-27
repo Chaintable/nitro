@@ -53,6 +53,9 @@ var (
 	poisonQueueSendSuccessesCounter = metrics.NewRegisteredCounter(
 		"arb/filtering-report/forwarder/poison_queue_send_successes_total", nil,
 	)
+	externalEndpointSlowdownTriggeredCounter = metrics.NewRegisteredCounter(
+		"arb/filtering-report/forwarder/external_endpoint_slowdown_triggered_total", nil,
+	)
 )
 
 type ExternalEndpointRetryableErrorSlowdownConfig struct {
@@ -220,6 +223,7 @@ func (r *Forwarder) pollAndForward(ctx context.Context, consecutiveRetryableErro
 		externalEndpointRetryableFailuresCounter.Inc(1)
 		*consecutiveRetryableErrors++
 		if *consecutiveRetryableErrors >= r.config.ExternalEndpointRetryableErrorSlowdown.ConsecutiveRetryableErrors {
+			externalEndpointSlowdownTriggeredCounter.Inc(1)
 			return r.config.ExternalEndpointRetryableErrorSlowdown.Duration
 		}
 		return 0
