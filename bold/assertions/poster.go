@@ -51,7 +51,7 @@ func (m *Manager) postAssertionRoutine(ctx context.Context) {
 			case errors.Is(err, sol.ErrBatchNotYetFound):
 				log.Info("Waiting for more batches to post assertions about them onchain")
 			case errors.Is(err, errAssertionNotYetFinalized):
-				log.Info("Posted assertion not yet visible at configured RPC head; "+
+				log.Debug("Posted assertion not yet visible at configured RPC head; "+
 					"will advance cursor once it finalizes", "err", err)
 			default:
 				logLevel := log.Error
