@@ -254,6 +254,7 @@ func (p Programs) CallProgram(
 	callCost = arbmath.SaturatingUAdd(callCost, penalty)
 
 	if err := contract.BurnGas(callCost); err != nil {
+		attributeWasmComputation(contract, startingGas)
 		return nil, err
 	}
 	statedb.AddStylusPages(program.footprint)
