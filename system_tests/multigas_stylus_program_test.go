@@ -392,7 +392,8 @@ func TestMultigasStylus_BurnGasFailAttribution(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	builder := NewNodeBuilder(ctx).DefaultConfig(t, false)
+	builder := NewNodeBuilder(ctx).DefaultConfig(t, false).
+		WithArbOSVersion(params.ArbosVersion_MultiGasRefundFix)
 	cleanup := builder.Build(t)
 	defer cleanup()
 
