@@ -596,7 +596,8 @@ func TestFilterService_KeepsListOnOversizedSync(t *testing.T) {
 	countBefore := service.GetHashCount()
 	require.NotEmpty(t, digestBefore, "initial digest should be set")
 	require.Equal(t, 1, countBefore)
-	require.True(t, service.hashStore.IsRestricted(restrictedAddr), "address should be restricted after initial load")
+	restricted, _ := service.hashStore.IsRestricted(restrictedAddr)
+	require.True(t, restricted, "address should be restricted after initial load")
 
 	// Swap the S3 object for a payload that exceeds the configured limit.
 	oversized := bytes.Repeat([]byte("X"), 2*1024*1024)
@@ -615,7 +616,7 @@ func TestFilterService_KeepsListOnOversizedSync(t *testing.T) {
 	if got := service.GetHashCount(); got != countBefore {
 		t.Errorf("hash count changed after failed sync: got %d, want %d", got, countBefore)
 	}
-	if !service.hashStore.IsRestricted(restrictedAddr) {
+	if restricted, _ := service.hashStore.IsRestricted(restrictedAddr); !restricted {
 		t.Error("address should still be restricted after failed sync")
 	}
 }
