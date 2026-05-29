@@ -1,4 +1,4 @@
-// Copyright 2021-2022, Offchain Labs, Inc.
+// Copyright 2021-2026, Offchain Labs, Inc.
 // For license information, see https://github.com/OffchainLabs/nitro/blob/master/LICENSE.md
 
 package stopwaiter
@@ -8,6 +8,7 @@ import (
 	"errors"
 	"reflect"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -15,62 +16,63 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 
 	"github.com/offchainlabs/nitro/util/containers"
+	"github.com/offchainlabs/nitro/util/stopwaiter/state"
+	"github.com/offchainlabs/nitro/util/stopwaiter/stoppable"
 )
+
+// Re-exported for callers' convenience: use stopwaiter.Stoppable / stopwaiter.StoppableChild
+// instead of importing the internal stoppable sub-package directly.
+type Stoppable = stoppable.Stoppable
+type StoppableChild = stoppable.StoppableChild
 
 const stopDelayWarningTimeout = 30 * time.Second
 
 type StopWaiterSafe struct {
-	mutex     sync.Mutex // protects started, stopped, ctx, parentCtx, stopFunc
-	started   bool
-	stopped   bool
-	ctx       context.Context
-	parentCtx context.Context
-	stopFunc  func()
-	name      string
-	waitChan  <-chan interface{}
-
+	state.InternalState
 	wg sync.WaitGroup
 }
 
 func (s *StopWaiterSafe) Started() bool {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	return s.started
+	st := s.RLock()
+	defer s.RUnlock()
+	return st.Started
 }
 
 func (s *StopWaiterSafe) Stopped() bool {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	return s.stopped
+	st := s.RLock()
+	defer s.RUnlock()
+	return st.Stopped
 }
 
 func (s *StopWaiterSafe) GetContextSafe() (context.Context, error) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	return s.getContext()
+	st := s.RLock()
+	defer s.RUnlock()
+	return st.GetContext()
 }
 
 // this context is not cancelled even after someone calls Stop
 func (s *StopWaiterSafe) GetParentContextSafe() (context.Context, error) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	return s.getParentContext()
+	st := s.RLock()
+	defer s.RUnlock()
+	return st.GetParentContext()
 }
 
-// Only call this internally with the mutex held.
-func (s *StopWaiterSafe) getContext() (context.Context, error) {
-	if s.started {
-		return s.ctx, nil
+// TrackChild registers a child Stoppable to be automatically stopped
+// when this StopWaiter is stopped, in LIFO (reverse) order.
+// If children have already been taken for shutdown, the child is stopped immediately.
+// A nil child is silently ignored.
+func (s *StopWaiterSafe) TrackChild(child Stoppable) {
+	if child == nil {
+		return
 	}
-	return nil, errors.New("not started")
-}
-
-// Only call this internally with the mutex held.
-func (s *StopWaiterSafe) getParentContext() (context.Context, error) {
-	if s.started {
-		return s.parentCtx, nil
+	st := s.Lock()
+	if st.IsChildrenTaken() {
+		s.Unlock()
+		child.StopAndWait()
+		return
 	}
-	return nil, errors.New("not started")
+	st.AppendChild(child)
+	s.Unlock()
 }
 
 func getParentName(parent any) string {
@@ -78,30 +80,57 @@ func getParentName(parent any) string {
 	return strings.Replace(reflect.TypeOf(parent).String(), "*", "", 1)
 }
 
+var ErrAlreadyStarted = errors.New("start after start")
+
 // start-after-start will error, start-after-stop will immediately cancel
 func (s *StopWaiterSafe) Start(ctx context.Context, parent any) error {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	if s.started {
-		return errors.New("start after start")
+	st := s.Lock()
+	defer s.Unlock()
+	if st.Started {
+		return ErrAlreadyStarted
 	}
-	s.started = true
-	s.name = getParentName(parent)
-	s.parentCtx = ctx
-	s.ctx, s.stopFunc = context.WithCancel(s.parentCtx)
-	if s.stopped {
-		s.stopFunc()
+	st.Started = true
+	st.Name = getParentName(parent)
+
+	var childCtx context.Context
+	childCtx, st.StopFunc = context.WithCancel(ctx)
+
+	st.SetCtx(childCtx)
+	st.SetParentCtx(ctx)
+
+	if st.Stopped {
+		st.StopFunc()
 	}
 	return nil
 }
 
-func (s *StopWaiterSafe) StopOnly() {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	if s.started && !s.stopped {
-		s.stopFunc()
+// takeChildren atomically takes children from the state so that
+// concurrent StopOnly/StopAndWait calls don't double-stop them.
+// Returns nil on subsequent calls.
+// The children are also stored in TakenChildren so that stopAndWaitImpl
+// can call StopAndWait on them even after StopOnly has already taken them.
+func (s *StopWaiterSafe) takeChildren() []Stoppable {
+	st := s.Lock()
+	defer s.Unlock()
+	if st.IsChildrenTaken() {
+		return nil
 	}
-	s.stopped = true
+	return st.TakeChildren()
+}
+
+// StopOnly cancels the context and stops all tracked children (non-blocking).
+// A subsequent StopAndWait will still wait for children's goroutines to finish.
+func (s *StopWaiterSafe) StopOnly() {
+	children := s.takeChildren()
+	for i := len(children) - 1; i >= 0; i-- {
+		children[i].StopOnly()
+	}
+	st := s.Lock()
+	defer s.Unlock()
+	if st.Started && !st.Stopped {
+		st.StopFunc()
+	}
+	st.Stopped = true
 }
 
 // StopAndWait may be called multiple times, even before start.
@@ -118,6 +147,16 @@ func getAllStackTraces() string {
 }
 
 func (s *StopWaiterSafe) stopAndWaitImpl(warningTimeout time.Duration) error {
+	children := s.takeChildren()
+	if children == nil {
+		// StopOnly was already called and took the children; retrieve them for waiting.
+		st := s.RLock()
+		children = st.GetTakenChildren()
+		s.RUnlock()
+	}
+	for i := len(children) - 1; i >= 0; i-- {
+		children[i].StopAndWait()
+	}
 	s.StopOnly()
 	if !s.Started() {
 		// No need to wait, because nothing can be started if it's already stopped.
@@ -136,7 +175,10 @@ func (s *StopWaiterSafe) stopAndWaitImpl(warningTimeout time.Duration) error {
 	select {
 	case <-timer.C:
 		traces := getAllStackTraces()
-		log.Warn("taking too long to stop", "name", s.name, "delay[s]", warningTimeout.Seconds())
+		st := s.RLock()
+		name := st.Name
+		s.RUnlock()
+		log.Warn("taking too long to stop", "name", name, "delay[s]", warningTimeout.Seconds())
 		log.Warn(traces)
 	case <-waitChan:
 		timer.Stop()
@@ -147,10 +189,10 @@ func (s *StopWaiterSafe) stopAndWaitImpl(warningTimeout time.Duration) error {
 }
 
 func (s *StopWaiterSafe) GetWaitChannel() (<-chan interface{}, error) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	if s.waitChan == nil {
-		ctx, err := s.getContext()
+	st := s.Lock()
+	defer s.Unlock()
+	if st.WaitChan == nil {
+		ctx, err := st.GetContext()
 		if err != nil {
 			return nil, err
 		}
@@ -160,9 +202,9 @@ func (s *StopWaiterSafe) GetWaitChannel() (<-chan interface{}, error) {
 			s.wg.Wait()
 			close(waitChan)
 		}()
-		s.waitChan = waitChan
+		st.WaitChan = waitChan
 	}
-	return s.waitChan, nil
+	return st.WaitChan, nil
 }
 
 // If stop was already called, thread might silently not be launched
@@ -174,11 +216,17 @@ func (s *StopWaiterSafe) LaunchThreadSafe(foo func(context.Context)) error {
 	if s.Stopped() {
 		return nil
 	}
-	s.wg.Add(1)
-	go func() {
+	st := s.RLock()
+	name := st.Name
+	s.RUnlock()
+	s.wg.Go(func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Error("Thread crashed", "name", name, "message", r, "stack", string(debug.Stack()))
+			}
+		}()
 		foo(ctx)
-		s.wg.Done()
-	}()
+	})
 	return nil
 }
 
@@ -306,32 +354,6 @@ func LaunchPromiseThread[T any](
 	return &promise
 }
 
-func ChanRateLimiter[T any](s *StopWaiterSafe, inChan <-chan T, maxRateCallback func() time.Duration) (<-chan T, error) {
-	outChan := make(chan T)
-	err := s.LaunchThreadSafe(func(ctx context.Context) {
-		nextAllowedTriggerTime := time.Now()
-		for {
-			select {
-			case <-ctx.Done():
-				close(outChan)
-				return
-			case data := <-inChan:
-				now := time.Now()
-				if now.After(nextAllowedTriggerTime) {
-					outChan <- data
-					nextAllowedTriggerTime = now.Add(maxRateCallback())
-				}
-			}
-		}
-	})
-	if err != nil {
-		close(outChan)
-		return nil, err
-	}
-
-	return outChan, nil
-}
-
 // StopWaiter may panic on race conditions instead of returning errors
 type StopWaiter struct {
 	StopWaiterSafe
@@ -341,6 +363,17 @@ func (s *StopWaiter) Start(ctx context.Context, parent any) {
 	if err := s.StopWaiterSafe.Start(ctx, parent); err != nil {
 		panic(err)
 	}
+}
+
+// StartAndTrackChild starts a child with the parent's managed context
+// and registers it for automatic shutdown in LIFO order.
+// A nil child is silently ignored.
+func (s *StopWaiter) StartAndTrackChild(child StoppableChild) {
+	if child == nil {
+		return
+	}
+	child.Start(s.GetContext())
+	s.TrackChild(child)
 }
 
 func (s *StopWaiter) StopAndWait() {
