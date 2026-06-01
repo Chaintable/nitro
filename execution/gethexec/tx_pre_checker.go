@@ -10,10 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/spf13/pflag"
 
-	"github.com/ethereum/go-ethereum/arbitrum/filter"
 	"github.com/ethereum/go-ethereum/arbitrum/retryables"
 	"github.com/ethereum/go-ethereum/arbitrum_types"
 	"github.com/ethereum/go-ethereum/common"
@@ -27,7 +25,6 @@ import (
 
 	"github.com/offchainlabs/nitro/arbos/arbosState"
 	"github.com/offchainlabs/nitro/arbos/l1pricing"
-	"github.com/offchainlabs/nitro/execution/gethexec/addressfilter"
 	"github.com/offchainlabs/nitro/execution/gethexec/eventfilter"
 	"github.com/offchainlabs/nitro/timeboost"
 	"github.com/offchainlabs/nitro/util/arbmath"
@@ -70,11 +67,10 @@ func TxPreCheckerConfigAddOptions(prefix string, f *pflag.FlagSet) {
 
 type TxPreChecker struct {
 	TransactionPublisher
-	bc                       *core.BlockChain
-	config                   TxPreCheckerConfigFetcher
-	expressLaneTracker       *timeboost.ExpressLaneTracker
-	backend                  core.NodeInterfaceBackendAPI
-	filteringReportRPCClient *FilteringReportRPCClient
+	bc                 *core.BlockChain
+	config             TxPreCheckerConfigFetcher
+	expressLaneTracker *timeboost.ExpressLaneTracker
+	backend            core.NodeInterfaceBackendAPI
 	// nil disables prechecker address-filter dry-run (e.g. on sequencer nodes).
 	txFilterer core.TxFilterer
 }
@@ -84,19 +80,17 @@ func NewTxPreChecker(
 	bc *core.BlockChain,
 	config TxPreCheckerConfigFetcher,
 	txFilterer core.TxFilterer,
-	filteringReportRPCClient *FilteringReportRPCClient,
 ) *TxPreChecker {
 	return &TxPreChecker{
-		TransactionPublisher:     publisher,
-		bc:                       bc,
-		config:                   config,
-		txFilterer:               txFilterer,
-		filteringReportRPCClient: filteringReportRPCClient,
+		TransactionPublisher: publisher,
+		bc:                   bc,
+		config:               config,
+		txFilterer:           txFilterer,
 	}
 }
 
 func (c *TxPreChecker) SetTxFiltererForTest(_ *testing.T, execEngine *ExecutionEngine, ef *eventfilter.EventFilter) {
-	c.txFilterer = &txFilterer{execEngine: execEngine, eventFilter: ef}
+	c.txFilterer = &txFilterer{execEngine: execEngine, eventFilter: ef, filteringReportRPCClient: execEngine.filteringReportRPCClient}
 }
 
 func (c *TxPreChecker) SetAPIBackend(backend core.NodeInterfaceBackendAPI) {
@@ -332,7 +326,7 @@ func (c *TxPreChecker) checkFilteredAddresses(ctx context.Context, tx *types.Tra
 	}
 	msg.SkipNonceChecks = true
 
-	_, filteredAddresses, err := gasestimator.Run(ctx, msg, &gasestimator.Options{
+	_, err = gasestimator.Run(ctx, msg, &gasestimator.Options{
 		Config:           c.bc.Config(),
 		Chain:            c.bc,
 		Header:           header,
@@ -342,41 +336,9 @@ func (c *TxPreChecker) checkFilteredAddresses(ctx context.Context, tx *types.Tra
 		TxFilterer:       c.txFilterer,
 	})
 	if errors.Is(err, state.ErrArbTxFilter) {
-		c.reportFilteredTx(tx, header, filteredAddresses)
 		return err
 	}
 	// Other execution errors are ignored since the pre-check is only concerned
 	// with address filtering results, not with exact execution results.
 	return nil
-}
-
-func (c *TxPreChecker) reportFilteredTx(tx *types.Transaction, header *types.Header, filteredAddresses []filter.FilteredAddressRecord) {
-	if c.filteringReportRPCClient == nil {
-		return
-	}
-	txHash := tx.Hash()
-	txRLP, err := tx.MarshalBinary()
-	if err != nil {
-		log.Error("failed to marshal filtered tx", "txHash", txHash, "err", err)
-		return
-	}
-	report := addressfilter.FilteredTxReport{
-		ID:                uuid.Must(uuid.NewV7()).String(),
-		TxHash:            txHash,
-		TxRLP:             txRLP,
-		FilteredAddresses: filteredAddresses,
-		ChainID:           c.bc.Config().ChainID.Uint64(),
-		BlockNumber:       header.Number.Uint64() + 1,
-		ParentBlockHash:   header.Hash(),
-		PositionInBlock:   0,
-		FilteredAt:        time.Now().UTC(),
-		IsDelayed:         false,
-		DelayedReportData: nil,
-	}
-	promise := c.filteringReportRPCClient.ReportFilteredTransactions([]addressfilter.FilteredTxReport{report})
-	c.filteringReportRPCClient.LaunchThread(func(ctx context.Context) {
-		if _, err := promise.Await(ctx); err != nil {
-			log.Error("failed to deliver filtered tx report", "txHash", txHash, "err", err)
-		}
-	})
 }

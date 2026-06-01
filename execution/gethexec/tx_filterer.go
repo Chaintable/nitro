@@ -4,11 +4,18 @@
 package gethexec
 
 import (
+	"context"
+	"time"
+
+	"github.com/google/uuid"
+
 	"github.com/ethereum/go-ethereum/arbitrum/filter"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/log"
 
+	"github.com/offchainlabs/nitro/execution/gethexec/addressfilter"
 	"github.com/offchainlabs/nitro/execution/gethexec/eventfilter"
 )
 
@@ -18,6 +25,8 @@ import (
 type txFilterer struct {
 	execEngine  *ExecutionEngine
 	eventFilter *eventfilter.EventFilter
+	// nil disables filtered-tx reporting (e.g. the eth_call backend filterer).
+	filteringReportRPCClient *FilteringReportRPCClient
 }
 
 func (f *txFilterer) Setup(statedb *state.StateDB) {
@@ -29,10 +38,41 @@ func (f *txFilterer) TouchAddresses(statedb *state.StateDB, tx *types.Transactio
 	touchAddresses(statedb, tx, sender)
 }
 
-func (f *txFilterer) CheckFiltered(statedb *state.StateDB) ([]filter.FilteredAddressRecord, error) {
+func (f *txFilterer) CheckFiltered(statedb *state.StateDB, rootTx *types.Transaction, header *types.Header) error {
 	applyEventFilter(f.eventFilter, statedb)
 	if filtered, records := statedb.IsAddressFiltered(); filtered {
-		return records, state.ErrArbTxFilter
+		if f.filteringReportRPCClient != nil {
+			f.reportFilteredTx(rootTx, header, records)
+		}
+		return state.ErrArbTxFilter
 	}
-	return nil, nil
+	return nil
+}
+
+func (f *txFilterer) reportFilteredTx(tx *types.Transaction, header *types.Header, filteredAddresses []filter.FilteredAddressRecord) {
+	txHash := tx.Hash()
+	txRLP, err := tx.MarshalBinary()
+	if err != nil {
+		log.Error("failed to marshal filtered tx", "txHash", txHash, "err", err)
+		return
+	}
+	report := addressfilter.FilteredTxReport{
+		ID:                uuid.Must(uuid.NewV7()).String(),
+		TxHash:            txHash,
+		TxRLP:             txRLP,
+		FilteredAddresses: filteredAddresses,
+		ChainID:           f.execEngine.bc.Config().ChainID.Uint64(),
+		BlockNumber:       header.Number.Uint64() + 1,
+		ParentBlockHash:   header.Hash(),
+		PositionInBlock:   0,
+		FilteredAt:        time.Now().UTC(),
+		IsDelayed:         false,
+		DelayedReportData: nil,
+	}
+	promise := f.filteringReportRPCClient.ReportFilteredTransactions([]addressfilter.FilteredTxReport{report})
+	f.filteringReportRPCClient.LaunchThread(func(ctx context.Context) {
+		if _, err := promise.Await(ctx); err != nil {
+			log.Error("failed to deliver filtered tx report", "txHash", txHash, "err", err)
+		}
+	})
 }
