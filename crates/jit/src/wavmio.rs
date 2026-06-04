@@ -10,7 +10,6 @@ use std::{
 
 use arbutil::Color;
 use caller_env::GuestPtr;
-use sha2::Digest;
 use validation::transfer::receive_validation_input;
 
 use crate::{
