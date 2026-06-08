@@ -64,10 +64,10 @@ on:
       run-flaky-mel:
         required: false
         type: boolean
-      run-consensus-execution-rpc-a:
+      run-defaults-a-consensus-execution-rpc:
         required: false
         type: boolean
-      run-consensus-execution-rpc-b:
+      run-defaults-b-consensus-execution-rpc:
         required: false
         type: boolean
 
@@ -154,14 +154,14 @@ jobs:
       # --------------------- CONSENSUS AND EXECUTION OVER RPC MODE ---------------------
 
       - name: run tests with consensus and execution nodes connected over json rpc (A-batch)
-        if: inputs.run-consensus-execution-rpc-a
+        if: inputs.run-defaults-a-consensus-execution-rpc
         run: >-
           ${{ github.workspace }}/.github/workflows/gotestsum.sh
           --tags cionly --timeout 60m --cover --test_state_scheme hash --consensus_execution_in_same_process_use_rpc
           --junitfile test-results/junit-consensus-execution-rpc-a.xml --run '^Test[A-L]'
 
       - name: run tests with consensus and execution nodes connected over json rpc (B-batch)
-        if: inputs.run-consensus-execution-rpc-b
+        if: inputs.run-defaults-b-consensus-execution-rpc
         run: >-
           ${{ github.workspace }}/.github/workflows/gotestsum.sh
           --tags cionly --timeout 60m --cover --test_state_scheme hash --consensus_execution_in_same_process_use_rpc
