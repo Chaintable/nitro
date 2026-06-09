@@ -969,8 +969,10 @@ dependencies = [
  "k256",
  "rand 0.10.1",
  "rand_pcg",
+ "sha2 0.10.9",
  "spin",
  "tiny-keccak",
+ "validation",
  "wasmer",
 ]
 
