@@ -645,7 +645,7 @@ func TestAddressFilterCreate2(t *testing.T) {
 	}
 	foundTarget := false
 	for _, fa := range report.FilteredAddresses {
-		if fa.Address == create2Addr && fa.FilterReason.Reason == filter.ReasonCreateTarget {
+		if fa.Address == create2Addr && fa.FilterReason.Reason == filter.ReasonCreate {
 			if fa.FilterReason.EventRuleMatch != nil {
 				t.Fatal("expected nil EventRuleMatch for direct address filter via CREATE2")
 			}
@@ -654,7 +654,7 @@ func TestAddressFilterCreate2(t *testing.T) {
 		}
 	}
 	if !foundTarget {
-		t.Fatalf("report should contain filtered address %s with reason %s, got %+v", create2Addr.Hex(), filter.ReasonCreateTarget, report.FilteredAddresses)
+		t.Fatalf("report should contain filtered address %s with reason %s, got %+v", create2Addr.Hex(), filter.ReasonCreate, report.FilteredAddresses)
 	}
 
 	// Test: CREATE2 with different salt (different address) should succeed
@@ -709,7 +709,7 @@ func TestAddressFilterCreate(t *testing.T) {
 	}
 	foundTarget := false
 	for _, fa := range report.FilteredAddresses {
-		if fa.Address == createAddr && fa.FilterReason.Reason == filter.ReasonCreateTarget {
+		if fa.Address == createAddr && fa.FilterReason.Reason == filter.ReasonCreate {
 			if fa.FilterReason.EventRuleMatch != nil {
 				t.Fatal("expected nil EventRuleMatch for direct address filter via CREATE")
 			}
@@ -718,7 +718,7 @@ func TestAddressFilterCreate(t *testing.T) {
 		}
 	}
 	if !foundTarget {
-		t.Fatalf("report should contain filtered address %s with reason %s, got %+v", createAddr.Hex(), filter.ReasonCreateTarget, report.FilteredAddresses)
+		t.Fatalf("report should contain filtered address %s with reason %s, got %+v", createAddr.Hex(), filter.ReasonCreate, report.FilteredAddresses)
 	}
 
 	// Test: CREATE to non-filtered address (after nonce incremented) should succeed
@@ -776,7 +776,7 @@ func TestAddressFilterTopLevelDeployment(t *testing.T) {
 	}
 	foundTarget := false
 	for _, fa := range report.FilteredAddresses {
-		if fa.Address == createAddr && fa.FilterReason.Reason == filter.ReasonCreateTarget {
+		if fa.Address == createAddr && fa.FilterReason.Reason == filter.ReasonCreate {
 			if fa.FilterReason.EventRuleMatch != nil {
 				t.Fatal("expected nil EventRuleMatch for direct address filter via top-level deployment")
 			}
@@ -785,7 +785,7 @@ func TestAddressFilterTopLevelDeployment(t *testing.T) {
 		}
 	}
 	if !foundTarget {
-		t.Fatalf("report should contain filtered address %s with reason %s, got %+v", createAddr.Hex(), filter.ReasonCreateTarget, report.FilteredAddresses)
+		t.Fatalf("report should contain filtered address %s with reason %s, got %+v", createAddr.Hex(), filter.ReasonCreate, report.FilteredAddresses)
 	}
 }
 
