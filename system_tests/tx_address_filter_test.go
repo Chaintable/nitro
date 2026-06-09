@@ -18,6 +18,7 @@ import (
 	"github.com/ethereum/go-ethereum/arbitrum/filter"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 
 	"github.com/offchainlabs/nitro/execution"
@@ -580,6 +581,73 @@ func TestAddressFilterStaticCallToContract(t *testing.T) {
 
 func TestAddressFilterStaticCallToEOA(t *testing.T) {
 	runInnerCallFilterTest(t, true, (*localgen.AddressFilterTest).StaticcallTargetTx)
+}
+
+// runStylusCallFilterTest deploys multicall.wasm as the Stylus caller and exercises
+// the call hostio against a filtered target (contract or EOA).
+func runStylusCallFilterTest(t *testing.T, useEOATarget bool) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	builder := NewNodeBuilder(ctx).DefaultConfig(t, false)
+	builder.isSequencer = true
+	filteringReportStack, endpoint := SetupFilteringReport(t)
+	builder.execConfig.TransactionFiltering.FilteringReportRPCClient.URL = filteringReportStack.HTTPEndpoint()
+	cleanup := builder.Build(t)
+	defer cleanup()
+
+	auth := builder.L2Info.GetDefaultTransactOpts("Owner", ctx)
+	multicallAddr := deployWasm(t, ctx, auth, builder.L2.Client, rustFile("multicall"))
+
+	var filteredAddr common.Address
+	if useEOATarget {
+		builder.L2Info.GenerateAccount("FilteredEOA")
+		filteredAddr = builder.L2Info.GetAddress("FilteredEOA")
+	} else {
+		auth2 := builder.L2Info.GetDefaultTransactOpts("Owner", ctx)
+		filteredAddr = deployWasm(t, ctx, auth2, builder.L2.Client, rustFile("storage"))
+	}
+
+	checker := newHashedChecker([]common.Address{filteredAddr})
+	builder.L2.ExecNode.ExecEngine.SetAddressChecker(t, checker)
+
+	args := argsForMulticall(vm.CALL, filteredAddr, nil, nil)
+	tx := builder.L2Info.PrepareTxTo("Owner", &multicallAddr, 10_000_000, common.Big0, args)
+	err := builder.L2.Client.SendTransaction(ctx, tx)
+	if err == nil {
+		t.Fatal("expected Stylus CALL to filtered target to be rejected")
+	}
+	if !isFilteredError(err) {
+		t.Fatalf("expected filtered error, got: %v", err)
+	}
+
+	report := endpoint.NextReport(t)
+	CheckCommonReportFields(t, ctx, builder, report, tx)
+	if report.IsDelayed {
+		t.Fatal("report should not be marked as delayed")
+	}
+	found := false
+	for _, fa := range report.FilteredAddresses {
+		if fa.Address == filteredAddr && fa.FilterReason.Reason == filter.ReasonCallTarget {
+			if fa.FilterReason.EventRuleMatch != nil {
+				t.Fatal("expected nil EventRuleMatch for Stylus call-target filter")
+			}
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("report should contain filtered address %s with reason %s, got %+v", filteredAddr.Hex(), filter.ReasonCallTarget, report.FilteredAddresses)
+	}
+}
+
+func TestAddressFilterStylusCallToContract(t *testing.T) {
+	runStylusCallFilterTest(t, false)
+}
+
+func TestAddressFilterStylusCallToEOA(t *testing.T) {
+	runStylusCallFilterTest(t, true)
 }
 
 func TestAddressFilterDisabled(t *testing.T) {
