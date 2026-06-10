@@ -249,9 +249,14 @@ COPY ./scripts/download-machine.sh .
 #RUN ./download-machine.sh consensus-v50-rc.5 0xb90895a56a59c0267c2004a0e103ad725bd98d5a05c3262806ab4ccb3f997558
 #RUN ./download-machine.sh consensus-v50-rc.6 0x2c54f6e9e378ba320ed9c713a1d9f067a572b1437e4f1c40b1a915d3066c04f2
 #RUN ./download-machine.sh consensus-v40 0xdb698a2576298f25448bc092e52cf13b1e24141c997135d70f217d674bbeb69a
-RUN ./download-machine.sh consensus-v50 0x2c54f6e9e378ba320ed9c713a1d9f067a572b1437e4f1c40b1a915d3066c04f2
-RUN ./download-machine.sh consensus-v51 0x8a7513bf7bb3e3db04b0d982d0e973bcf57bf8b88aef7c6d03dba3a81a56a499
-RUN ./download-machine.sh consensus-v51.1 0xc2c02df561d4afaf9a1d6785f70098ec3874765c638e3cb6dbe8d3c83333e14c
+# ApeChain: upstream machines deliberately NOT downloaded. They cannot validate
+# ApeChain's 8-field StateAccount state, and shipping them is dangerous: 'latest'
+# would be a symlink to the newest downloaded upstream machine, making its root
+# look like the build's module root. The real machine is built from source in
+# module-root-calc and copied into machines/latest in the node stages below.
+#RUN ./download-machine.sh consensus-v50 0x2c54f6e9e378ba320ed9c713a1d9f067a572b1437e4f1c40b1a915d3066c04f2
+#RUN ./download-machine.sh consensus-v51 0x8a7513bf7bb3e3db04b0d982d0e973bcf57bf8b88aef7c6d03dba3a81a56a499
+#RUN ./download-machine.sh consensus-v51.1 0xc2c02df561d4afaf9a1d6785f70098ec3874765c638e3cb6dbe8d3c83333e14c
 
 # Factored out of node-builder so the stripped variant doesn't depend on it.
 FROM golang:1.25-bookworm AS node-builder-base
@@ -370,6 +375,14 @@ COPY --from=node-builder  /workspace/target/bin/bidder-client            /usr/lo
 COPY --from=node-builder  /workspace/target/bin/el-proxy                 /usr/local/bin/
 COPY --from=node-builder  /workspace/target/bin/datool                   /usr/local/bin/
 COPY --from=node-builder  /workspace/target/bin/genesis-generator        /usr/local/bin/
+# ApeChain: ship the from-source machine. Upstream only does this in nitro-node-dev;
+# without it the production image has no machine that can validate ApeChain state.
+RUN rm -rf /home/user/target/machines/latest
+COPY --from=module-root-calc /workspace/target/machines/latest/machine.wavm.br         /home/user/target/machines/latest/
+COPY --from=module-root-calc /workspace/target/machines/latest/until-host-io-state.bin /home/user/target/machines/latest/
+COPY --from=module-root-calc /workspace/target/machines/latest/module-root.txt         /home/user/target/machines/latest/
+COPY --from=module-root-calc /workspace/target/machines/latest/replay.wasm             /home/user/target/machines/latest/
+RUN chmod -R 555 /home/user/target/machines/latest
 RUN ./validate-wasm-module-root.sh /home/user/target/machines /usr/local/bin/prover && \
     nitro --version
 USER user
@@ -393,7 +406,7 @@ USER user
 FROM nitro-node-validator AS nitro-node-dev
 USER root
 # Copy in latest WASM module root
-RUN rm -f /home/user/target/machines/latest
+RUN rm -rf /home/user/target/machines/latest
 COPY --from=prover-export /bin/jit                                         /usr/local/bin/
 COPY --from=node-builder  /workspace/target/bin/deploy                     /usr/local/bin/
 COPY --from=node-builder  /workspace/target/bin/seq-coordinator-invalidate /usr/local/bin/
