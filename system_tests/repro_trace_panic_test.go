@@ -36,23 +36,17 @@ func TestReproTraceTimeoutEmptyCallstackPanic(t *testing.T) {
 
 	l2rpc := builder.L2.Stack.Attach()
 	for _, tracer := range []string{"callTracer", "flatCallTracer", "erc7562Tracer"} {
-		crashes, timeouts := 0, 0
-		for attempt := 0; attempt < 50 && crashes == 0; attempt++ {
+		for attempt := 0; attempt < 50; attempt++ {
 			for bn := uint64(1); bn <= lastBlock; bn++ {
 				var blockTrace json.RawMessage
 				err := l2rpc.CallContext(ctx, &blockTrace, "debug_traceBlockByNumber",
 					rpc.BlockNumber(bn),
 					map[string]interface{}{"tracer": tracer, "timeout": "1ns"})
-				if err == nil {
-					continue
-				}
-				if strings.Contains(err.Error(), "method handler crashed") {
-					crashes++
-				} else {
-					timeouts++
+				// A timed-out trace must return an error, never crash the handler.
+				if err != nil && strings.Contains(err.Error(), "method handler crashed") {
+					t.Fatalf("tracer %s crashed the RPC handler on a timed-out trace: %v", tracer, err)
 				}
 			}
 		}
-		t.Logf("tracer=%s crashes=%d timeouts=%d", tracer, crashes, timeouts)
 	}
 }
