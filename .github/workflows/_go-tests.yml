@@ -67,6 +67,12 @@ on:
       run-flaky-mel:
         required: false
         type: boolean
+      run-consensus-execution-rpc-a:
+        required: false
+        type: boolean
+      run-consensus-execution-rpc-b:
+        required: false
+        type: boolean
 
 permissions:
   contents: read
@@ -147,6 +153,23 @@ jobs:
           ${{ github.workspace }}/.github/workflows/gotestsum.sh
           --tags cionly --timeout 60m --cover --coverprofile coverage-b.txt --test_state_scheme hash
           --junitfile test-results/junit-defaults-b.xml --skip '^Test[A-L]'
+
+      # --------------------- CONSENSUS AND EXECUTION OVER RPC MODE ---------------------
+
+      - name: run tests with consensus and execution nodes connected over json rpc (A-batch)
+        if: inputs.run-consensus-execution-rpc-a
+        run: >-
+          ${{ github.workspace }}/.github/workflows/gotestsum.sh
+          --tags cionly --timeout 60m --cover --test_state_scheme hash --consensus_execution_in_same_process_use_rpc
+          --junitfile test-results/junit-consensus-execution-rpc-a.xml --run '^Test[A-L]'
+
+      - name: run tests with consensus and execution nodes connected over json rpc (B-batch)
+        if: inputs.run-consensus-execution-rpc-b
+        run: >-
+          ${{ github.workspace }}/.github/workflows/gotestsum.sh
+          --tags cionly --timeout 60m --cover --test_state_scheme hash --consensus_execution_in_same_process_use_rpc
+          --junitfile test-results/junit-consensus-execution-rpc-b.xml --skip '^Test[A-L]'
+
       # --------------------- PATHDB MEL MODE ---------------------
 
       - name: run tests without race detection and path state scheme (A-batch, MEL)
@@ -176,7 +199,7 @@ jobs:
         run: >-
           ${{ github.workspace }}/.github/workflows/gotestsum.sh
           --tags cionly --timeout 60m --test_state_scheme hash
-          --junitfile test-results/junit-defaults-b-mel.xml --skip '^Test[A-L]' --test_mel      
+          --junitfile test-results/junit-defaults-b-mel.xml --skip '^Test[A-L]' --test_mel
       - name: run redis tests
         if: inputs.run-defaults-a
         run: >-
@@ -263,7 +286,7 @@ jobs:
       - name: run race tests
         if: inputs.run-race
         run: >-
-          ${{ github.workspace }}/.github/workflows/gotestsum.sh 
+          ${{ github.workspace }}/.github/workflows/gotestsum.sh
           --race --timeout 90m --test_state_scheme hash
           --junitfile test-results/junit-race.xml
 
@@ -296,6 +319,7 @@ jobs:
         run: >-
           ${{ github.workspace }}/.github/workflows/gotestsum.sh --timeout 120m --test_database_engine pebble
           --junitfile test-results/junit-pebble-b.xml --skip '^Test[A-N]' --reduce-parallelism
+
       # --------------------- PROCESS JUNIT LOGS ---------------------
 
       - name: Process JUnit XML logs
