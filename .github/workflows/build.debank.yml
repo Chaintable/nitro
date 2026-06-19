@@ -9,8 +9,9 @@ on:
 env:
   AWS_REGION: us-east-1
   REGISTRY: public.ecr.aws/b2h7a5c4/chaintable
-  IMAGE: robinhood-writer
+  IMAGE: nitro
   DOCKERFILE: Dockerfile
+  CHAINS: "arbitrum gravity plume robinhood"
 
 jobs:
   build-artifacts:
@@ -86,6 +87,11 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
         with:
           registry-type: public
-      - name: Merge manifest
+      - name: Merge manifest and alias per-chain writers
         run: |
+          # repo 级 multi-arch manifest
           docker buildx imagetools create --tag ${REGISTRY}/${IMAGE}:${REVISION} ${REGISTRY}/${IMAGE}:amd64-${REVISION} ${REGISTRY}/${IMAGE}:arm64-${REVISION}
+          # 各链 writer 别名(同 digest,多名)
+          for c in ${CHAINS}; do
+            docker buildx imagetools create --tag ${REGISTRY}/${c}-writer:${REVISION} ${REGISTRY}/${IMAGE}:${REVISION}
+          done
