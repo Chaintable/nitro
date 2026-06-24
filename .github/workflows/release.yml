@@ -95,8 +95,8 @@ jobs:
           android: true
           dotnet: true
           haskell: true
-          large-packages: false
-          swap-storage: false
+          large-packages: true
+          swap-storage: true
 
       - name: Checkout code
         uses: actions/checkout@v2
