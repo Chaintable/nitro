@@ -36,19 +36,11 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: tibdex/github-app-token@v1
-        id: generate-token
-        with:
-          clean: true
-          app_id: ${{ secrets.RELEASE_MANAGER_APP_ID }}
-          private_key: ${{ secrets.RELEASE_MANAGER_APP_SECRET }}
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.ref || github.ref }}
           submodules: recursive
-          token: ${{ steps.generate-token.outputs.token }}
 
       - name: Set env
         run: |
@@ -78,7 +70,6 @@ jobs:
           context: .
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ matrix.arch }}-${{ env.REVISION }}
-          build-args: ACCESS_TOKEN=${{ steps.generate-token.outputs.token }}
           provenance: false
 
   merge-docker-manifest:
