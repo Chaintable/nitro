@@ -68,8 +68,8 @@ Arbitrum One successfully migrated from the Classic Arbitrum stack onto Nitro on
 through `-private` forks. First-time setup:
 
 ```sh
-git clone https://github.com/Chaintable/nitro   # no need for --recurse-submodules
-cd nitro
+git clone git@github.com:OffchainLabs/nitro-private.git   # no need for --recurse-submodules
+cd nitro-private
 make init-submodules
 make check-submodules
 ```
