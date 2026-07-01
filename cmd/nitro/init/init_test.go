@@ -381,7 +381,7 @@ func TestEmptyDatabaseDir(t *testing.T) {
 		},
 		{
 			name:  "succeed with expected files",
-			files: []string{"LOCK", "classic-msg", "l2chaindata"},
+			files: []string{"LOCK", "classic-msg", "l2chaindata", "wasm"},
 		},
 		{
 			name:    "fail with unexpected files",
@@ -442,7 +442,7 @@ func TestOpenInitializeExecutionDBIncompatibleStateScheme(t *testing.T) {
 	l1Client := ethclient.NewClient(stack.Attach())
 
 	// opening for the first time doesn't error
-	executionDB, _, blockchain, err := OpenInitializeExecutionDB(
+	executionDB, _, blockchain, _, err := OpenInitializeExecutionDB(
 		ctx,
 		stack,
 		&nodeConfig,
@@ -459,7 +459,7 @@ func TestOpenInitializeExecutionDBIncompatibleStateScheme(t *testing.T) {
 	Require(t, err)
 
 	// opening for the second time doesn't error
-	executionDB, _, blockchain, err = OpenInitializeExecutionDB(
+	executionDB, _, blockchain, _, err = OpenInitializeExecutionDB(
 		ctx,
 		stack,
 		&nodeConfig,
@@ -477,7 +477,7 @@ func TestOpenInitializeExecutionDBIncompatibleStateScheme(t *testing.T) {
 
 	// opening with a different state scheme errors
 	nodeConfig.Execution.Caching.StateScheme = rawdb.HashScheme
-	_, _, _, err = OpenInitializeExecutionDB(
+	_, _, _, _, err = OpenInitializeExecutionDB(
 		ctx,
 		stack,
 		&nodeConfig,
@@ -705,7 +705,7 @@ func TestOpenInitializeExecutionDbEmptyInit(t *testing.T) {
 
 	l1Client := ethclient.NewClient(stack.Attach())
 
-	executionDB, _, blockchain, err := OpenInitializeExecutionDB(
+	executionDB, _, blockchain, _, err := OpenInitializeExecutionDB(
 		ctx,
 		stack,
 		&nodeConfig,
@@ -1019,8 +1019,9 @@ func TestCheckAndDownloadDBNoSnapshot(t *testing.T) {
 
 	nodeConfig := config.NodeConfigDefault
 
-	err = checkAndDownloadDB(ctx, stack, &nodeConfig)
+	downloaded, err := checkAndDownloadDB(ctx, stack, &nodeConfig)
 	Require(t, err)
+	require.False(t, downloaded)
 }
 
 func getInitHelper(t *testing.T, ownerAdress string, chainID uint64, emptyState bool, importFile, genesisJsonFile string, useDevInit, skipInitDataReader bool) (statetransfer.InitDataReader, *params.ChainConfig, *params.ArbOSInit, ethdb.Database, func(), error) {
@@ -1059,7 +1060,7 @@ func getInitHelper(t *testing.T, ownerAdress string, chainID uint64, emptyState 
 
 	l1Client := ethclient.NewClient(stack.Attach())
 
-	executionDB, _, _, err := OpenInitializeExecutionDB(
+	executionDB, _, _, _, err := OpenInitializeExecutionDB(
 		ctx,
 		stack,
 		&nodeConfig,
