@@ -63,7 +63,7 @@ require (
 	cloud.google.com/go/auth/oauth2adapt v0.2.2 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	cloud.google.com/go/iam v1.1.8 // indirect
-	github.com/Chaintable/pipeline v0.0.61-nitro-v3.5.6-2 // indirect
+	github.com/Chaintable/pipeline v0.0.61-nitro-v3.5.6-3 // indirect
 	github.com/ProjectZKM/Ziren/crates/go-runtime/zkvm_runtime v0.0.0-20251001021608-1fe7b43fc4d6 // indirect
 	github.com/cockroachdb/fifo v0.0.0-20240606204812-0bbfbd93a7ce // indirect
 	github.com/coreos/go-semver v0.3.1 // indirect
