@@ -1,165 +1,117 @@
-# Contribution Guidelines
+# Contributing
 
-Note: The latest and most up-to-date documentation can be found on our [docs portal](https://docs.arbitrum.io/launch-arbitrum-chain/a-gentle-introduction).
+Thanks for your interest in contributing.
 
-Excited by our work want to get more involved in making Arbitrum more successful? Or maybe you want to learn more about Layer 2 technologies and want to contribute as a first step?
+This repository is a **fork**: upstream [OffchainLabs/nitro](https://github.com/OffchainLabs/nitro)
+plus the [Chaintable pipeline](https://github.com/Chaintable/pipeline) tracer. It
+runs write node(s) that produce block data for the Chaintable data pipeline, for
+the chain(s) listed in this repository's CI configuration and README. It is not
+a general-purpose fork of OffchainLabs/nitro.
 
-You can explore our [Open Issues](https://github.com/offchainlabs/nitro/issues) or [run a Nitro node](https://docs.arbitrum.io/run-arbitrum-node/run-nitro-dev-node) yourself and suggest improvements. 
+**First, determine where your change belongs:**
 
-<!-- start-trivial-prs -->
-> [!IMPORTANT] 
-> Please, **do not send pull requests for trivial changes**; these will be rejected.
-> These types of pull requests incur a cost to reviewers and do not provide much value to the project.
-> If you are unsure, please open an issue first to discuss the change.
-> Here are some examples of trivial PRs that will most-likely be rejected:
-> * Fixing typos
-> * Non-impactful/not-useful AI generated code
-> * Refactors that don't improve usability
-<!-- end-trivial-prs -->
+- **Chain client changes** (consensus, p2p, EVM, RPC, txpool) — contribute
+  **upstream**, following their contributing process. We cannot accept
+  chain-core changes in this fork: they would diverge from upstream and be lost
+  or cause conflicts at the next upstream merge. If an upstream fix matters to
+  this fork, open an issue here linking the upstream PR/commit and we will pull
+  it in with the next sync.
 
-## How contributions are merged
+- **Pipeline layer changes** — the pipeline tracer and its block-data output,
+  the Dockerfile, published images, CI workflows, or docs about running this
+  write node — contribute **here**, following the process below.
 
-Our development model has changed. The private repository (`nitro-private`) is now the source of truth for day-to-day development; the public `nitro` repository is a published mirror of private.
+---
 
-External pull requests are still welcome and should be opened against the public `nitro` repository as described in the steps below. When a contribution is accepted, a core developer will:
+## Our Process (contributions to the Chaintable pipeline layer)
 
-1. Port your changes into the private repository, preserving you as the commit author.
-2. Push the same commits to the public repository when the private repository is synced.
+### Getting Started
 
-As a result, the feedback loop is somewhat slower than a direct merge, and there will be a delay between acceptance and the change appearing in the public repository. We appreciate your patience and will work to keep communication clear throughout the process.
+Requirements:
 
-## Contribution Steps
+* Go and Rust toolchains (see `go.mod` / `Cargo.toml`)
 
-**1. Build Nitro locally following our instructions in our [docs](https://docs.arbitrum.io/run-arbitrum-node/nitro/build-nitro-locally).**
+### Development Workflow
 
-**2. Fork the Nitro repo.**
+1. Fork the repository
+2. Create a branch from `main`
+3. Make changes, focused on the pipeline layer
+4. Run local checks
+5. Open a PR
 
-Sign in to your GitHub account or create a new account if you do not have one already. Then navigate your browser to https://github.com/offchainlabs/nitro. In the upper right hand corner of the page, click “fork”. This will create a copy of the Nitro repo in your account.
+Keep PRs small and focused.
 
-**3. Create a local clone of Nitro.**
+### Local Checks (must pass)
 
-```
-$ git clone https://github.com/OffchainLabs/nitro.git
-```
-
-**4. Link your local clone to the fork on your GitHub repo.**
-
-```
-$ git remote add mynitrorepo https://github.com/<your_github_user_name>/nitro.git
-```
-
-**5. Link your local clone to the Nitro repo so that you can easily fetch future changes.**
-
-```
-$ git remote add upstream https://github.com/offchainlabs/nitro.git
-$ git remote -v (you should see mynitrorepo and upstream in the list of remotes)
+```bash
+make build
+make lint
 ```
 
-**6. Create a local branch with a name that clearly identifies what you will be working on.**
+### Code Guidelines
+
+* Keep the diff minimal — prefer hooks over invasive edits to client code
+* Match the existing code style and conventions (`gofmt`)
+* Prefer simple and explicit logic
+* Do not change chain-core behavior (see the top of this document)
+
+### Testing
+
+Changes to the pipeline layer must include tests where practical. At minimum,
+describe how you verified the emitted data: chain, block range, and what you
+compared it against.
+
+### Pull Requests
+
+Before submitting:
+
+* Local checks pass
+* Tests added or updated
+* Behavior changes clearly explained
+
+PRs should include:
+
+* Summary
+* Motivation
+* Testing details
+* Compatibility impact
+
+Note on CI: it builds the Docker images for this repository, and the image
+publishing steps need repository credentials, which GitHub does not provide to
+pull requests from forks — those steps failing on a fork PR is expected. A
+maintainer will build and verify your change on an internal branch.
+
+### Commit Guidelines
+
+* Use clear, descriptive messages
+
+Example:
 
 ```
-$ git checkout -b feature-in-progress-branch
+tracer: fix state-diff ordering for reorged blocks
 ```
 
-**7. Make improvements to the code.**
+### Releases
 
-Each time you work on the code be sure that you are working on the branch that you have created as opposed to your local copy of the Nitro repo. Keeping your changes segregated in this branch will make it easier to merge your changes into the repo later.
+* Release tags follow `v<base-version>-ct.N` (`ct` = Chaintable; e.g.
+  `v3.11.1-ct.3`); a GitHub Release publishes the versioned images
 
-```
-$ git checkout feature-in-progress-branch
-```
+### Reporting Issues
 
-**8. Test your changes.**
+Please include:
 
-Write unit tests or write a [system test](https://github.com/OffchainLabs/nitro/tree/master/system_tests) for your feature before shipping it.
+* Image tag or commit
+* Chain and block height
+* Reproduction steps
+* Expected vs actual behavior
 
-**9. Add a changelog fragment.**
+### Security
 
-Add a new markdown file to the `changelog/` directory that briefly describes your change for release notes purpose. The filename and content should follow the format in the existing files in that directory and best practices from https://keepachangelog.com/. In case the change is not considered as release-note-worthy (e.g., CI changes), you should use the `### Ignored` section in the changelog fragment.
+Do not disclose vulnerabilities publicly.
 
-**10. Stage the file or files that you want to commit.**
+See [SECURITY.md](./SECURITY.md) for reporting instructions.
 
-```
-$ git add --all
-```
+### License
 
-This command stages all the files that you have changed. You can add individual files by specifying the file name or names and eliminating the “-- all”.
-
-**11. Commit the file or files.**
-
-```
-$ git commit  -m “Message to explain what the commit covers”
-```
-
-You can use the –amend flag to include previous commits that have not yet been pushed to an upstream repo to the current commit. Ensure commit messages are informative and provide sufficient context about your edits.
-
-**12. Fetch any changes that have occurred in the upstream Nitro repo since you started work.**
-
-```
-$ git fetch upstream
-```
-
-**13. Push your changes to your fork of the Nitro repo.**
-
-Use git push to move your changes to your fork of the repo.
-
-```
-$ git push mynitrorepo feature-in-progress-branch
-```
-
-**14. Create a pull request.**
-
-Navigate your browser to https://github.com/offchainlabs/nitro and click on the new pull request button. In the “base” box on the left, leave the default selection “base master”, the branch that you want your changes to be applied to. In the “compare” box on the right, select feature-in-progress-branch, the branch containing the changes you want to apply. 
-
-> [!NOTE]
-> As described in [How contributions are merged](#how-contributions-are-merged) above, accepted pull requests are ported into our private development repository rather than merged directly. Your change will appear in the public repository once the private repository is synced.
-
-**15. Respond to comments by Core Contributors.**
-
-Core Contributors may ask questions and request that you make edits. If you set notifications at the top of the page to “not watching,” you will still be notified by email whenever someone comments on the page of a pull request you have created. If you are asked to modify your pull request, repeat steps 8 through 15, then leave a comment to notify the Core Contributors that the pull request is ready for further review.
-
-**16. If the number of commits becomes excessive, you may be asked to squash your commits.**
-
- You can do this with an interactive rebase. Start by running the following command to determine the commit that is the base of your branch...
-
-```
-$ git merge-base feature-in-progress-branch nitro/master
-```
-
-**17. The previous command will return a commit-hash that you should use in the following command.**
-
-```
-$ git rebase -i commit-hash
-```
-
-Your text editor will open with a file that lists the commits in your branch with the word pick in front of each branch such as the following …
-
-```
-pick 	hash	do some work
-pick 	hash 	fix a bug
-pick 	hash 	add a feature
-```
-
-Replace the word pick with the word “squash” for every line but the first, so you end with ….
-
-```
-pick    hash	do some work
-squash  hash 	fix a bug
-squash  hash 	add a feature
-```
-
-Save and close the file, then a commit command will appear in the terminal that squashes the smaller commits into one. Check to be sure the commit message accurately reflects your changes and then hit enter to execute it.
-
-**18. Update your pull request with the following command.**
-
-```
-$ git push mynitrorepo feature-in-progress-branch
-```
-
-**19.  Finally, again leave a comment to the Core Contributors on the pull request to let them know that the pull request has been updated.**
-
-We love working with people that are autonomous, bring new experience to the team, and are excited for their work. 
-
-Interested in working on Nitro full time? See open roles at Offchain.
-
-[Offchain Labs Careers](https://www.offchain.io/careers)
+By contributing, you agree that your contributions are licensed under the same
+terms as this repository — see [LICENSE.md](./LICENSE.md).

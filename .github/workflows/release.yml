@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Image tag for manual runs (e.g. v0.8.0-debank-5)"
+        description: "Image tag for manual runs (e.g. v0.8.1-ct.1)"
         required: true
       ref:
         description: "Git ref to build (tag/branch/sha); empty = the dispatched ref"
