@@ -61,7 +61,10 @@ func MakeGenesisBlock(parentHash common.Hash, blockNumber uint64, timestamp uint
 
 func InitializeArbosInDatabase(db ethdb.Database, cacheConfig *core.BlockChainConfig, initData statetransfer.InitDataReader, chainConfig *params.ChainConfig, genesisArbOSInit *params.ArbOSInit, initMessage *arbostypes.ParsedInitMessage, timestamp uint64, accountsPerSync uint) (root common.Hash, err error) {
 	triedbConfig := cacheConfig.TriedbConfig()
-	triedbConfig.Preimages = false
+	// Honor the configured preimage setting instead of force-disabling it: the path
+	// scheme genesis state dump reverse-resolves account addresses via preimages to
+	// derive the correct storage-trie owner (enable with --execution.caching.enable-preimages).
+	triedbConfig.Preimages = cacheConfig.Preimages
 	stateDatabase := state.NewDatabase(triedb.NewDatabase(db, triedbConfig), nil)
 	defer func() {
 		err = errors.Join(err, stateDatabase.TrieDB().Close())
