@@ -1,0 +1,43 @@
+# libstylus.so — the native Stylus runtime that leafage-evm dlopens to execute
+# WASM contracts (via LEAFAGE_ARB_STYLUS_LIB). The result is a COPY-only image:
+# it has no entrypoint and is never meant to run. Consumers pull the library out
+# with `COPY --from=<this image>:<tag> /libstylus.so ...`.
+#
+# The builder is pinned to bookworm (glibc 2.36) deliberately: leafage-evm runs
+# on ubuntu:24.04 (glibc 2.39), and a library built against an older glibc loads
+# on a newer one but not the other way round. If leafage-evm's runtime base ever
+# moves, this base must stay at or below it.
+ARG RUST_VERSION=1.93
+
+FROM rust:${RUST_VERSION}-bookworm AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        cmake \
+        make \
+        g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+# Only what the Rust workspace needs — every workspace member lives under
+# crates/, and the Go tree plays no part in this build.
+COPY rust-toolchain.toml Cargo.toml Cargo.lock ./
+COPY scripts/build-brotli.sh scripts/
+COPY brotli brotli
+COPY crates crates
+
+# crates/brotli links the C static libs, so they have to be built first;
+# without this the stylus build fails on `brotlienc-static not found`.
+RUN ./scripts/build-brotli.sh -l
+
+RUN cargo build --release --lib -p stylus
+
+# The symbols leafage resolves at runtime. Checking them here turns an ABI drift
+# into a failed build rather than a failed dlopen in production.
+RUN for sym in stylus_activate stylus_compile stylus_call stylus_target_set free_rust_bytes; do \
+        nm -D target/release/libstylus.so | grep -q " ${sym}\$" \
+            || { echo "libstylus.so is missing exported symbol: ${sym}" >&2; exit 1; }; \
+    done
+
+FROM scratch
+COPY --from=builder /src/target/release/libstylus.so /libstylus.so
