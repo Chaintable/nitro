@@ -42,6 +42,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           clean: true
+          # Tag by the source commit rather than the PR's merge commit, so the
+          # published revision maps to something that exists in the history.
+          # Empty on workflow_dispatch, where the triggering ref is used.
+          ref: ${{ github.event.pull_request.head.sha }}
           # crates/tools/wasmer and brotli are submodules the build links against.
           submodules: recursive
 
@@ -81,6 +85,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Set env
         run: |
