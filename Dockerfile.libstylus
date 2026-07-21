@@ -32,8 +32,14 @@ RUN ./scripts/build-brotli.sh -l
 
 RUN cargo build --release --lib -p stylus
 
-# The symbols leafage resolves at runtime. Checking them here turns an ABI drift
-# into a failed build rather than a failed dlopen in production.
+# The release profile carries debuginfo, which leaves the library around 237MB
+# and would land whole in every consumer's image. --strip-debug drops only the
+# DWARF sections; the dynamic symbol table leafage resolves against survives.
+RUN strip --strip-debug target/release/libstylus.so
+
+# The symbols leafage resolves at runtime, checked *after* stripping so the
+# assertion covers what actually ships. Turns ABI drift into a failed build
+# rather than a failed dlopen in production.
 RUN for sym in stylus_activate stylus_compile stylus_call stylus_target_set free_rust_bytes; do \
         nm -D target/release/libstylus.so | grep -q " ${sym}\$" \
             || { echo "libstylus.so is missing exported symbol: ${sym}" >&2; exit 1; }; \
