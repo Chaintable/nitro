@@ -29,6 +29,7 @@ FROM node:24.4.1-bookworm-slim AS contracts-builder
 RUN apt-get update && \
     apt-get install -y git python3 make g++ curl
 RUN curl -L https://foundry.paradigm.xyz | bash && . ~/.bashrc && ~/.foundry/bin/foundryup -i 1.2.3
+ENV PATH="/root/.foundry/bin:${PATH}"
 WORKDIR /workspace
 COPY contracts-legacy/package.json contracts-legacy/yarn.lock contracts-legacy/
 RUN cd contracts-legacy && yarn install
