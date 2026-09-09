@@ -571,16 +571,14 @@ func getDAS(
 	l1client *ethclient.Client,
 	stack *node.Node,
 ) (daprovider.Writer, func(), *daprovider.ReaderRegistry, error) {
-	if config.DAProvider.Enable && config.DataAvailability.Enable {
-		return nil, nil, nil, errors.New("da-provider and data-availability cannot be enabled together")
-	}
-
 	var err error
 	var daClient *daclient.Client
 	var anytrustWriter daprovider.Writer
 	var anytrustReader daprovider.Reader
 	var withDAWriter bool
 	var dasServerCloseFn func()
+	// AnyTrust chains still require DataAvailability.Enable. When configured,
+	// the external DA provider supplies both recovery and posting (e.g. CAS).
 	if config.DAProvider.Enable {
 		daClient, err = daclient.NewClient(ctx, &config.DAProvider, data_streaming.PayloadCommiter())
 		if err != nil {
