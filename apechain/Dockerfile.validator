@@ -1,0 +1,24 @@
+# Dual-WASM wrap: the freshly built node image plus every machine the prior
+# production image carries, so the staker can validate across a
+# setWasmModuleRoot transition. Skip this stage when the root does not change.
+ARG BASE_IMAGE
+ARG PRIOR_IMAGE
+
+FROM ${PRIOR_IMAGE} AS prior
+
+FROM ${BASE_IMAGE}
+ARG OLD_ROOT
+USER root
+COPY --from=prior /home/user/target/machines /tmp/prior-machines
+RUN set -e; new=$(cat /home/user/target/machines/latest/module-root.txt); \
+    for m in /tmp/prior-machines/*/; do \
+        name=$(basename "$m"); \
+        [ "$name" = latest ] && name="${OLD_ROOT}"; \
+        { [ "$name" = "$new" ] || [ -e "/home/user/target/machines/$name" ]; } && continue; \
+        cp -r "$m" "/home/user/target/machines/$name"; \
+        test "$(cat "/home/user/target/machines/$name/module-root.txt")" = "$name"; \
+    done; \
+    rm -rf /tmp/prior-machines; \
+    chmod -R 555 /home/user/target/machines; \
+    ./validate-wasm-module-root.sh /home/user/target/machines /usr/local/bin/prover
+USER user
