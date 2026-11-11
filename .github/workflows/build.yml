@@ -3,7 +3,7 @@ name: "Build new artifacts"
 on:
   pull_request:
     branches:
-      - 'ape-v3.9.9'
+      - 'ape'
   workflow_dispatch:
 
 concurrency:
