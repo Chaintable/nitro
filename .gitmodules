@@ -1,6 +1,7 @@
 [submodule "go-ethereum"]
 	path = go-ethereum
 	url = https://github.com/Chaintable/go-ethereum-arb.git
+	branch = feat/writer-failover-ape
 [submodule "crates/wasm-libraries/soft-float/SoftFloat"]
 	path = crates/wasm-libraries/soft-float/SoftFloat
 	url = https://github.com/OffchainLabs/SoftFloat.git
