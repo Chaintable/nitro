@@ -1,3 +1,24 @@
+# Chaintable write node
+
+> Fork of [OffchainLabs/nitro](https://github.com/OffchainLabs/nitro), with Chaintable pipeline patches.
+
+## Architecture
+
+This repo runs the chain's execution layer with the [Chaintable pipeline](https://github.com/Chaintable/pipeline) tracer embedded. The tracer extracts block data — block headers, transactions, call traces, receipts, events, and state diffs — and ships it to **S3 + Kafka** (see pipeline's [architecture](https://github.com/Chaintable/pipeline/blob/main/docs/architecture.md)). Two consumption paths:
+
+- **Block headers + state diffs** → Kafka + S3 → [leafage-evm](https://github.com/Chaintable/leafage-evm): a lightweight EVM executor serving state queries (`eth_call`, `eth_estimateGas`, …), no P2P sync, no tx storage (see its [architecture](https://github.com/Chaintable/leafage-evm#architecture)).
+- **Block files** (transactions · call traces · receipts · events) → S3 → Chaintable's transaction/trace indexing pipeline.
+
+```
+Chaintable write node (this repo · producer, embeds pipeline tracer)
+        │
+        ├─ block headers + state diffs ──────────────────→ Kafka + S3 ─→ leafage-evm (EVM state queries)
+        │
+        └─ block files (tx · trace · receipts · events) ──→ S3 ─→ Chaintable indexing pipeline (tx/trace data)
+```
+
+---
+
 <br />
 <p align="center">
   <a href="https://arbitrum.io/">
@@ -64,6 +85,28 @@ Nitro is currently licensed under a [Business Source License](./LICENSE.md), sim
 The Additional Use Grant also permits the deployment of the Nitro software, in a permissionless fashion and without cost, as a new blockchain provided that the chain settles to either Arbitrum One or Arbitrum Nova.
 
 For those that prefer to deploy the Nitro software either directly on Ethereum (i.e. an L2) or have it settle to another Layer-2 on top of Ethereum, the [Arbitrum Expansion Program (the "AEP")](https://docs.arbitrum.foundation/aep/ArbitrumExpansionProgramTerms.pdf) was recently established. The AEP allows for the permissionless deployment in the aforementioned fashion provided that 10% of net revenue (as more fully described in the AEP) is contributed back to the Arbitrum community in accordance with the requirements of the AEP.
+
+## Support policy and supported versions
+
+We will always support the current minor release of Nitro. Older versions of Nitro will be supported until either (shortest of):
+
+- 30 calendar days have passed since its release and there is a newer minor release, or
+- Offchain communicates a critical security concern about a version that warrants immediate upgrading to a newer, fixed version.
+
+Visit the documentation [Support policy page](https://docs.arbitrum.io/run-arbitrum-node/nitro-support-policy) for more detail.
+
+### Current supported Nitro versions
+
+| Currently supported | Relevant links |
+| ------------------- | -------------- |
+| Nitro 3.10.x        | [GitHub](https://github.com/OffchainLabs/nitro/releases/tag/v3.10.0) |
+| Nitro 3.9.9         | [GitHub](https://github.com/OffchainLabs/nitro/releases/tag/v3.9.9)
+
+### Special note about ArbOS & Arbitrum Classic
+
+- Only the ArbOS release that is activated on mainnet Arbitrum One will receive security updates and urgent vulnerability patches. We strongly recommend you stay up to date with the latest ArbOS since only the latest version will receive security updates. The activation timestamps for ArbOS upgrades on Arbitrum One can be found [here](https://docs.arbitrum.foundation/network-upgrades), with the most recent entry being the ArbOS version that is actively being used on Arbitrum One.
+  - Alternatively, you may verify the ArbOS version on Arbitrum One using the `arbOSVersion()` method on the `ArbSys` percompile at `0x000....64`. The result will be offset by 55 as the first version of Nitro is known as version 56 (e.g,. a response of 106 indicates that the ArbOS version is 51).
+- Arbitrum Classic will also continue to be supported.
 
 ## Contact
 

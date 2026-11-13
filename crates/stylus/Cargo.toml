@@ -45,4 +45,4 @@ rayon = ["prover/rayon"]
 cc_brotli = ["brotli/cc_brotli"]
 
 [lib]
-crate-type = ["lib", "staticlib"]
+crate-type = ["lib", "staticlib", "cdylib"]
